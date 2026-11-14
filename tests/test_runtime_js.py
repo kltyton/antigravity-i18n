@@ -223,19 +223,36 @@ class MockTray {{
 }}
 
 let lastDialogOpts = null;
-const fakeElectron = {{
-  Menu: MockMenu,
-  MenuItem: MockMenuItem,
-  Tray: MockTray,
-  dialog: {{ showMessageBox: async (opts) => {{ lastDialogOpts = opts; return {{ response: 1 }}; }} }},
-  Notification: function(opts) {{ this.opts = opts; }},
-  BrowserWindow: {{ prototype: {{ setTitle(t) {{ this.t = t; }} }}, getAllWindows: () => [] }},
-  ipcMain: {{ on() {{}}, handle() {{}} }},
-  app: {{ getLocale: () => 'zh-CN', on() {{}} }},
-  shell: {{ openPath: async () => '' }}
-}};
+const syncHandlers = {{}};
+const invokeHandlers = {{}};
+const MockNotification = function(opts) {{ this.opts = opts; }};
+MockNotification.isSupported = () => true;
+const mockDialog = {{ showMessageBox: async (opts) => {{ lastDialogOpts = opts; return {{ response: 1 }}; }} }};
+const mockBrowserWindow = {{ prototype: {{ setTitle(t) {{ this.t = t; }} }}, getAllWindows: () => [] }};
+const mockBaseWindow = {{ prototype: {{ setTitle(t) {{ this.t = t; }} }}, getAllWindows: () => [] }};
+const mockIpcMain = {{ on(ch, fn) {{ syncHandlers[ch] = fn; }}, handle(ch, fn) {{ invokeHandlers[ch] = fn; }} }};
+const mockApp = {{ getLocale: () => 'zh-CN', on() {{}} }};
+const mockShell = {{ openPath: async () => '' }};
+const fakeElectron = {{}};
+Object.defineProperties(fakeElectron, {{
+  Menu: {{ get: () => MockMenu, enumerable: true, configurable: false }},
+  MenuItem: {{ get: () => MockMenuItem, enumerable: true, configurable: false }},
+  Tray: {{ get: () => MockTray, enumerable: true, configurable: false }},
+  dialog: {{ get: () => mockDialog, enumerable: true, configurable: false }},
+  Notification: {{ get: () => MockNotification, enumerable: true, configurable: false }},
+  BrowserWindow: {{ get: () => mockBrowserWindow, enumerable: true, configurable: false }},
+  BaseWindow: {{ get: () => mockBaseWindow, enumerable: true, configurable: false }},
+  ipcMain: {{ get: () => mockIpcMain, enumerable: true, configurable: false }},
+  app: {{ get: () => mockApp, enumerable: true, configurable: false }},
+  shell: {{ get: () => mockShell, enumerable: true, configurable: false }},
+}});
 
 const mgr = initElectronI18n({{ electron: fakeElectron, baseDir: {json.dumps(str(i18n_dir))} }});
+if (!mgr) throw new Error('initElectronI18n returned null on getter-only Electron exports!');
+const syncEvt = {{}};
+syncHandlers['ag-i18n:get-state-sync'](syncEvt);
+const startupLocale = syncEvt.returnValue && syncEvt.returnValue.locale;
+const hasSetLocaleHandler = typeof invokeHandlers['ag-i18n:set-locale'] === 'function';
 const appMenu = fakeElectron.Menu.buildFromTemplate([
   {{ label: 'View', submenu: [{{ id: 'check-for-updates', label: 'Check for Updates' }}] }}
 ]);
@@ -273,6 +290,8 @@ const updaterAfterEn = fakeElectron.Menu.getApplicationMenu().getMenuItemById('c
 const trayAgentAfterEn = currentTrayMenu.items[0].label;
 
 console.log(JSON.stringify({{
+  startupLocale,
+  hasSetLocaleHandler,
   viewOrigPreserved,
   viewTranslated,
   hasLangMenu,
@@ -287,6 +306,8 @@ console.log(JSON.stringify({{
 }}));
 """
             res = _run_node(script)
+            self.assertEqual(res["startupLocale"], "zh-CN")
+            self.assertTrue(res["hasSetLocaleHandler"])
             self.assertEqual(res["viewOrigPreserved"], "View")
             self.assertEqual(res["viewTranslated"], "查看")
             self.assertTrue(res["hasLangMenu"])

@@ -449,12 +449,21 @@ function initElectronI18n(options) {
   }
 
   function refreshBrowserWindows() {
-    if (!BrowserWindow || typeof BrowserWindow.getAllWindows !== 'function') return;
-    var wins = BrowserWindow.getAllWindows();
+    var winSet = new Set();
+    var WindowClasses = [BrowserWindow, electron.BaseWindow];
+    for (var w = 0; w < WindowClasses.length; w++) {
+      var Cls = WindowClasses[w];
+      if (!Cls || typeof Cls.getAllWindows !== 'function') continue;
+      try {
+        var list = Cls.getAllWindows();
+        for (var k = 0; k < list.length; k++) {
+          winSet.add(list[k]);
+        }
+      } catch (_e) {}
+    }
     var payload = getSerializableState();
-    for (var i = 0; i < wins.length; i++) {
-      var win = wins[i];
-      if (!win || (win.isDestroyed && win.isDestroyed())) continue;
+    winSet.forEach(function (win) {
+      if (!win || (win.isDestroyed && win.isDestroyed())) return;
       if (trackedWindowOrigTitle.has(win) && typeof win.setTitle === 'function') {
         try {
           win.setTitle(trackedWindowOrigTitle.get(win));
@@ -470,7 +479,7 @@ function initElectronI18n(options) {
       } catch (_err) {
         // Ignore closed webContents
       }
-    }
+    });
     // Also notify any extra WebContents (e.g. WebContentsView in BaseWindow!)
     if (electron.webContents && typeof electron.webContents.getAllWebContents === 'function') {
       var allWc = electron.webContents.getAllWebContents();
@@ -538,173 +547,209 @@ function initElectronI18n(options) {
   }
 
   function installHooks() {
-    if (Menu && origBuildFromTemplate) {
-      Menu.buildFromTemplate = function (template) {
-        var translated = menuHelper.translateMenuTemplateArray(template, state.translator);
-        var built = origBuildFromTemplate(translated);
-        wrapMenuItems(built);
-        return built;
-      };
-    }
+    // 1. Register IPC channels FIRST so renderer preload sync/async calls never race or fail
+    //    even if any optional native prototype wrapper below is unsupported on a given Electron build.
+    try {
+      if (ipcMain && typeof ipcMain.on === 'function') {
+        ipcMain.on('ag-i18n:get-state-sync', function (event) {
+          event.returnValue = getSerializableState();
+        });
+      }
+      if (ipcMain && typeof ipcMain.handle === 'function') {
+        ipcMain.handle('ag-i18n:list-locales', function () {
+          state.locales = discoverLocales();
+          return { locale: state.locale, config: state.config, locales: state.locales };
+        });
+        ipcMain.handle('ag-i18n:set-locale', function (_event, nextLocale) {
+          return setLocale(nextLocale);
+        });
+        ipcMain.handle('ag-i18n:open-locales-folder', function () {
+          if (shell && typeof shell.openPath === 'function') {
+            fs.mkdirSync(state.localesDir, { recursive: true });
+            return shell.openPath(state.localesDir);
+          }
+          return '';
+        });
+      }
+    } catch (_ipcErr) {}
 
-    if (Menu && origSetApplicationMenu) {
-      Menu.setApplicationMenu = function (menu) {
-        if (!menu) {
-          trackedAppMenuSource = null;
-          return origSetApplicationMenu(menu);
-        }
-        trackedAppMenuSource = menu;
-        menuHelper.translateMenuInstanceLive(menu, state.translator);
-        wrapMenuItems(menu);
-        var rebuilt = buildDisplayMenuFromSource(menu, true, false);
-        return origSetApplicationMenu(rebuilt);
-      };
-    }
+    // 2. Native Menu & Tray hooks
+    try {
+      if (Menu && origBuildFromTemplate) {
+        Menu.buildFromTemplate = function (template) {
+          var translated = menuHelper.translateMenuTemplateArray(template, state.translator);
+          var built = origBuildFromTemplate(translated);
+          wrapMenuItems(built);
+          return built;
+        };
+      }
 
-    if (Menu && origMenuInsert) {
-      Menu.prototype.insert = function (pos, menuItem) {
-        if (menuItem && typeof menuItem === 'object') {
-          menuHelper.translateMenuItemLive(menuItem, state.translator);
-          wrapMenuItemLabelAccessor(menuItem);
-        }
-        return origMenuInsert.call(this, pos, menuItem);
-      };
-    }
-
-    if (Menu && origMenuAppend) {
-      Menu.prototype.append = function (menuItem) {
-        if (menuItem && typeof menuItem === 'object') {
-          menuHelper.translateMenuItemLive(menuItem, state.translator);
-          wrapMenuItemLabelAccessor(menuItem);
-        }
-        return origMenuAppend.call(this, menuItem);
-      };
-    }
-
-    if (Menu && origMenuPopup) {
-      Menu.prototype.popup = function (popupOpts) {
-        menuHelper.translateMenuInstanceLive(this, state.translator);
-        return origMenuPopup.call(this, popupOpts);
-      };
-    }
-
-    if (Tray && origTraySetContextMenu) {
-      Tray.prototype.setContextMenu = function (menu) {
-        trackedTrays.add(this);
-        if (menu) {
-          trackedTraySourceMenu.set(this, menu);
+      if (Menu && origSetApplicationMenu) {
+        Menu.setApplicationMenu = function (menu) {
+          if (!menu) {
+            trackedAppMenuSource = null;
+            return origSetApplicationMenu(menu);
+          }
+          trackedAppMenuSource = menu;
           menuHelper.translateMenuInstanceLive(menu, state.translator);
           wrapMenuItems(menu);
-          var displayTrayMenu = buildDisplayMenuFromSource(menu, true, true);
-          return origTraySetContextMenu.call(this, displayTrayMenu);
-        }
-        return origTraySetContextMenu.call(this, menu);
-      };
-    }
-
-    if (Tray && origTraySetToolTip) {
-      Tray.prototype.setToolTip = function (toolTip) {
-        trackedTrays.add(this);
-        if (typeof toolTip === 'string') {
-          trackedTrayOrigTip.set(this, toolTip);
-          return origTraySetToolTip.call(this, state.translator.translate(toolTip, { context: 'menu' }));
-        }
-        return origTraySetToolTip.call(this, toolTip);
-      };
-    }
-
-    if (dialog) {
-      var dialogMethods = [
-        'showMessageBox',
-        'showMessageBoxSync',
-        'showOpenDialog',
-        'showOpenDialogSync',
-        'showSaveDialog',
-        'showSaveDialogSync'
-      ];
-      dialogMethods.forEach(function (methodName) {
-        var origFn = dialog[methodName];
-        if (typeof origFn !== 'function') return;
-        dialog[methodName] = function () {
-          var args = Array.prototype.slice.call(arguments);
-          if (args.length === 1 && args[0] && typeof args[0] === 'object') {
-            args[0] = translateDialogOptions(args[0]);
-          } else if (args.length >= 2 && args[1] && typeof args[1] === 'object') {
-            args[1] = translateDialogOptions(args[1]);
-          }
-          return origFn.apply(this, args);
+          var rebuilt = buildDisplayMenuFromSource(menu, true, false);
+          return origSetApplicationMenu(rebuilt);
         };
-      });
-    }
-
-    if (electron.Notification) {
-      var OrigNotification = electron.Notification;
-      var WrappedNotification = function (opts) {
-        var nextOpts = opts;
-        if (opts && typeof opts === 'object') {
-          nextOpts = Object.assign({}, opts);
-          if (typeof nextOpts.title === 'string') {
-            nextOpts.title = state.translator.translate(nextOpts.title, { context: 'menu' });
-          }
-          if (typeof nextOpts.subtitle === 'string') {
-            nextOpts.subtitle = state.translator.translate(nextOpts.subtitle, { context: 'menu' });
-          }
-          if (typeof nextOpts.body === 'string') {
-            nextOpts.body = state.translator.translate(nextOpts.body, { context: 'menu' });
-          }
-        }
-        return new OrigNotification(nextOpts);
-      };
-      WrappedNotification.prototype = OrigNotification.prototype;
-      if (typeof OrigNotification.isSupported === 'function') {
-        WrappedNotification.isSupported = OrigNotification.isSupported.bind(OrigNotification);
       }
-      electron.Notification = WrappedNotification;
-    }
 
-    if (BrowserWindow && BrowserWindow.prototype && typeof BrowserWindow.prototype.setTitle === 'function') {
-      var origSetTitle = BrowserWindow.prototype.setTitle;
-      BrowserWindow.prototype.setTitle = function (title) {
-        if (typeof title === 'string') {
-          trackedWindowOrigTitle.set(this, title);
-          return origSetTitle.call(this, state.translator.translate(title, { context: 'menu' }));
-        }
-        return origSetTitle.call(this, title);
-      };
-    }
-
-    if (app && typeof app.on === 'function') {
-      app.on('web-contents-created', function (_event, contents) {
-        if (!contents || typeof contents.loadURL !== 'function') return;
-        var origLoadUrl = contents.loadURL.bind(contents);
-        contents.loadURL = function (url, loadOpts) {
-          var nextUrl = translateDataUrlIfHtml(url, state.translator);
-          return origLoadUrl(nextUrl, loadOpts);
+      if (Menu && origMenuInsert) {
+        Menu.prototype.insert = function (pos, menuItem) {
+          if (menuItem && typeof menuItem === 'object') {
+            menuHelper.translateMenuItemLive(menuItem, state.translator);
+            wrapMenuItemLabelAccessor(menuItem);
+          }
+          return origMenuInsert.call(this, pos, menuItem);
         };
-      });
-    }
+      }
 
-    if (ipcMain && typeof ipcMain.on === 'function') {
-      ipcMain.on('ag-i18n:get-state-sync', function (event) {
-        event.returnValue = getSerializableState();
-      });
-    }
-    if (ipcMain && typeof ipcMain.handle === 'function') {
-      ipcMain.handle('ag-i18n:list-locales', function () {
-        state.locales = discoverLocales();
-        return { locale: state.locale, config: state.config, locales: state.locales };
-      });
-      ipcMain.handle('ag-i18n:set-locale', function (_event, nextLocale) {
-        return setLocale(nextLocale);
-      });
-      ipcMain.handle('ag-i18n:open-locales-folder', function () {
-        if (shell && typeof shell.openPath === 'function') {
-          fs.mkdirSync(state.localesDir, { recursive: true });
-          return shell.openPath(state.localesDir);
+      if (Menu && origMenuAppend) {
+        Menu.prototype.append = function (menuItem) {
+          if (menuItem && typeof menuItem === 'object') {
+            menuHelper.translateMenuItemLive(menuItem, state.translator);
+            wrapMenuItemLabelAccessor(menuItem);
+          }
+          return origMenuAppend.call(this, menuItem);
+        };
+      }
+
+      if (Menu && origMenuPopup) {
+        Menu.prototype.popup = function (popupOpts) {
+          menuHelper.translateMenuInstanceLive(this, state.translator);
+          return origMenuPopup.call(this, popupOpts);
+        };
+      }
+    } catch (_menuErr) {}
+
+    try {
+      if (Tray && origTraySetContextMenu) {
+        Tray.prototype.setContextMenu = function (menu) {
+          trackedTrays.add(this);
+          if (menu) {
+            trackedTraySourceMenu.set(this, menu);
+            menuHelper.translateMenuInstanceLive(menu, state.translator);
+            wrapMenuItems(menu);
+            var displayTrayMenu = buildDisplayMenuFromSource(menu, true, true);
+            return origTraySetContextMenu.call(this, displayTrayMenu);
+          }
+          return origTraySetContextMenu.call(this, menu);
+        };
+      }
+
+      if (Tray && origTraySetToolTip) {
+        Tray.prototype.setToolTip = function (toolTip) {
+          trackedTrays.add(this);
+          if (typeof toolTip === 'string') {
+            trackedTrayOrigTip.set(this, toolTip);
+            return origTraySetToolTip.call(this, state.translator.translate(toolTip, { context: 'menu' }));
+          }
+          return origTraySetToolTip.call(this, toolTip);
+        };
+      }
+    } catch (_trayErr) {}
+
+    // 3. System dialog hooks
+    try {
+      if (dialog) {
+        var dialogMethods = [
+          'showMessageBox',
+          'showMessageBoxSync',
+          'showOpenDialog',
+          'showOpenDialogSync',
+          'showSaveDialog',
+          'showSaveDialogSync'
+        ];
+        dialogMethods.forEach(function (methodName) {
+          var origFn = dialog[methodName];
+          if (typeof origFn !== 'function') return;
+          dialog[methodName] = function () {
+            var args = Array.prototype.slice.call(arguments);
+            if (args.length === 1 && args[0] && typeof args[0] === 'object') {
+              args[0] = translateDialogOptions(args[0]);
+            } else if (args.length >= 2 && args[1] && typeof args[1] === 'object') {
+              args[1] = translateDialogOptions(args[1]);
+            }
+            return origFn.apply(this, args);
+          };
+        });
+      }
+    } catch (_dialogErr) {}
+
+    // 4. Desktop Notification wrapper (safe on Electron's getter-only CJS exports)
+    try {
+      if (electron.Notification) {
+        var OrigNotification = electron.Notification;
+        var WrappedNotification = function (opts) {
+          var nextOpts = opts;
+          if (opts && typeof opts === 'object') {
+            nextOpts = Object.assign({}, opts);
+            if (typeof nextOpts.title === 'string') {
+              nextOpts.title = state.translator.translate(nextOpts.title, { context: 'menu' });
+            }
+            if (typeof nextOpts.subtitle === 'string') {
+              nextOpts.subtitle = state.translator.translate(nextOpts.subtitle, { context: 'menu' });
+            }
+            if (typeof nextOpts.body === 'string') {
+              nextOpts.body = state.translator.translate(nextOpts.body, { context: 'menu' });
+            }
+          }
+          return new OrigNotification(nextOpts);
+        };
+        WrappedNotification.prototype = OrigNotification.prototype;
+        if (typeof OrigNotification.isSupported === 'function') {
+          WrappedNotification.isSupported = OrigNotification.isSupported.bind(OrigNotification);
         }
-        return '';
-      });
-    }
+        var notifDesc = Object.getOwnPropertyDescriptor(electron, 'Notification');
+        if (!notifDesc || notifDesc.writable || notifDesc.set) {
+          electron.Notification = WrappedNotification;
+        } else if (notifDesc.configurable) {
+          Object.defineProperty(electron, 'Notification', {
+            configurable: true,
+            enumerable: notifDesc.enumerable !== false,
+            get: function () { return WrappedNotification; }
+          });
+        }
+      }
+    } catch (_notifErr) {}
+
+    // 5. Window title & inline data:text/html overlay hooks
+    try {
+      var wrapWindowSetTitle = function (Cls) {
+        if (!Cls || !Cls.prototype || typeof Cls.prototype.setTitle !== 'function' || Cls.prototype.setTitle.__agI18nPatched) {
+          return;
+        }
+        var origSetTitle = Cls.prototype.setTitle;
+        var patchedSetTitle = function (title) {
+          if (typeof title === 'string') {
+            trackedWindowOrigTitle.set(this, title);
+            return origSetTitle.call(this, state.translator.translate(title, { context: 'menu' }));
+          }
+          return origSetTitle.call(this, title);
+        };
+        patchedSetTitle.__agI18nPatched = true;
+        Cls.prototype.setTitle = patchedSetTitle;
+      };
+      wrapWindowSetTitle(electron.BaseWindow);
+      wrapWindowSetTitle(BrowserWindow);
+    } catch (_winErr) {}
+
+    try {
+      if (app && typeof app.on === 'function') {
+        app.on('web-contents-created', function (_event, contents) {
+          if (!contents || typeof contents.loadURL !== 'function') return;
+          var origLoadUrl = contents.loadURL.bind(contents);
+          contents.loadURL = function (url, loadOpts) {
+            var nextUrl = translateDataUrlIfHtml(url, state.translator);
+            return origLoadUrl(nextUrl, loadOpts);
+          };
+        });
+      }
+    } catch (_wcErr) {}
   }
 
   loadConfig();

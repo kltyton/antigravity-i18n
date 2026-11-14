@@ -76,7 +76,7 @@ antigravity-i18n/
 
 **Option A — Pre-built Windows Executable (No Python Required):**
 
-Download `antigravity-i18n-gui-windows-x64.exe` (or the full `.zip` bundle) from [GitHub Releases](https://github.com/kltyton/antigravity-i18n/releases), close Antigravity Desktop, double-click the executable, pick a language, and click **Install / Update i18n**.
+Download `antigravity-i18n-gui-windows-x64.exe` (or the offline `antigravity-i18n-v*-windows-x64.zip` bundle) from [GitHub Releases](https://github.com/kltyton/antigravity-i18n/releases), close Antigravity Desktop, double-click the executable, pick a language, and click **Install / Update i18n**.
 
 **Option B — From Source (Windows / macOS / Linux):**
 

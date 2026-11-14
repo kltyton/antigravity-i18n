@@ -299,6 +299,199 @@ console.log(JSON.stringify({{
             self.assertEqual(res["updaterAfterEn"], "Checking for Updates...")
             self.assertEqual(res["trayAgentAfterEn"], "No agents running")
 
+    def test_settings_ui_mounts_in_general_and_switches_live(self):
+        script = f"""
+const path = require('path');
+const fs = require('fs');
+const core = require('./runtime/core.js');
+const preload = require('./runtime/preload-i18n.js');
+const settingsUi = require('./runtime/settings-ui.js');
+
+const zhBundle = JSON.parse(fs.readFileSync(path.join({json.dumps(str(LOCALES_DIR))}, 'zh-CN.json'), 'utf8'));
+const enBundle = JSON.parse(fs.readFileSync(path.join({json.dumps(str(LOCALES_DIR))}, 'en-US.json'), 'utf8'));
+const jaBundle = JSON.parse(fs.readFileSync(path.join({json.dumps(str(LOCALES_DIR))}, 'ja.json'), 'utf8'));
+
+function makeEl(tag) {{
+  const attrs = {{}};
+  const listeners = {{}};
+  const el = {{
+    tagName: tag.toUpperCase(),
+    nodeType: 1,
+    className: '',
+    id: '',
+    value: '',
+    disabled: false,
+    childNodes: [],
+    parentElement: null,
+    style: {{}},
+    get firstChild() {{ return this.childNodes[0] || null; }},
+    get children() {{ return this.childNodes.filter(c => c.nodeType === 1); }},
+    setAttribute(k, v) {{ attrs[k] = String(v); }},
+    getAttribute(k) {{ return k in attrs ? attrs[k] : null; }},
+    hasAttribute(k) {{ return k in attrs; }},
+    appendChild(child) {{
+      child.parentElement = this;
+      this.childNodes.push(child);
+      return child;
+    }},
+    removeChild(child) {{
+      const i = this.childNodes.indexOf(child);
+      if (i !== -1) this.childNodes.splice(i, 1);
+      child.parentElement = null;
+      return child;
+    }},
+    addEventListener(evt, fn) {{
+      (listeners[evt] = listeners[evt] || []).push(fn);
+    }},
+    dispatchEvent(evt) {{
+      const list = listeners[evt.type] || [];
+      list.forEach(fn => fn(evt));
+    }},
+    closest(sel) {{
+      if (sel.includes('[data-ag-i18n-ignore]')) {{
+        let p = this;
+        while (p) {{
+          if (p.hasAttribute && p.hasAttribute('data-ag-i18n-ignore')) return p;
+          p = p.parentElement;
+        }}
+      }}
+      if (sel === '.max-w-2xl') {{
+        let p = this;
+        while (p) {{
+          if (String(p.className || '').includes('max-w-2xl')) return p;
+          p = p.parentElement;
+        }}
+      }}
+      return null;
+    }},
+    querySelectorAll(sel) {{
+      const out = [];
+      const walk = (node) => {{
+        for (const c of node.childNodes || []) {{
+          if (c.nodeType === 1) {{
+            if (sel === 'h2' && c.tagName === 'H2') out.push(c);
+            walk(c);
+          }}
+        }}
+      }};
+      walk(this);
+      return out;
+    }},
+    querySelector(sel) {{
+      const mAttr = sel.match(/^\\[([a-zA-Z0-9_-]+)(?:="([^"]*)")?\\]$/);
+      const walk = (node) => {{
+        for (const c of node.childNodes || []) {{
+          if (c.nodeType === 1) {{
+            if (mAttr) {{
+              if (c.hasAttribute(mAttr[1]) && (mAttr[2] === undefined || c.getAttribute(mAttr[1]) === mAttr[2])) {{
+                return c;
+              }}
+            }}
+            const found = walk(c);
+            if (found) return found;
+          }}
+        }}
+        return null;
+      }};
+      return walk(this);
+    }},
+    get textContent() {{
+      return this.childNodes.map(c => c.nodeType === 3 ? c.nodeValue : c.textContent).join('');
+    }},
+    set textContent(v) {{
+      this.childNodes = [];
+      if (v !== '' && v !== null && v !== undefined) {{
+        const t = {{ nodeType: 3, nodeValue: String(v), parentElement: this }};
+        this.childNodes.push(t);
+      }}
+    }},
+  }};
+  return el;
+}}
+
+const docRoot = makeEl('div');
+const maxW = makeEl('div');
+maxW.className = 'p-6 flex flex-col gap-4 w-full max-w-2xl mx-auto';
+const headerBox = makeEl('div');
+const h2 = makeEl('h2');
+h2.className = 'text-2xl m-0 font-medium truncate flex-1 text-foreground';
+h2.textContent = 'General';
+headerBox.appendChild(h2);
+const sectionsWrap = makeEl('div');
+sectionsWrap.className = 'flex flex-col gap-8 w-full';
+maxW.appendChild(headerBox);
+maxW.appendChild(sectionsWrap);
+docRoot.appendChild(maxW);
+
+const fakeDoc = {{
+  documentElement: docRoot,
+  createElement: makeEl,
+  querySelectorAll: (s) => docRoot.querySelectorAll(s),
+}};
+
+const bundles = {{ 'zh-CN': zhBundle, 'en-US': enBundle, 'ja': jaBundle }};
+let state = {{
+  locale: 'zh-CN',
+  config: {{ locale: 'zh-CN' }},
+  locales: [
+    {{ locale: 'en-US', name: 'English', nativeName: 'English' }},
+    {{ locale: 'zh-CN', name: 'Chinese (Simplified)', nativeName: '简体中文' }},
+    {{ locale: 'ja', name: 'Japanese', nativeName: '日本語' }}
+  ],
+  bundle: zhBundle
+}};
+
+const dom = preload.createDomTranslator(state.bundle, core);
+dom.observeRoot(docRoot, {{}});
+
+const ctrl = settingsUi.createSettingsController({{
+  document: fakeDoc,
+  getState: () => state,
+  getOriginalText: dom.getOriginalText,
+  onSelectLocale: (nextLoc) => {{
+    const nextBundle = bundles[nextLoc];
+    state = Object.assign({{}}, state, {{ locale: nextLoc, config: {{ locale: nextLoc }}, bundle: nextBundle }});
+    dom.updateBundle(nextBundle, fakeDoc, {{}});
+    ctrl.sync();
+    return Promise.resolve(state);
+  }}
+}});
+
+ctrl.sync();
+ctrl.sync(); // verify idempotence (only 1 injected card)
+const h2Zh = h2.textContent;
+const countZh = sectionsWrap.children.length;
+const titleZh = sectionsWrap.querySelector('[data-ag-i18n-role="section-title"]').textContent;
+const sel = sectionsWrap.querySelector('[data-testid="ag-i18n-language-select"]');
+const valZh = sel.value;
+
+// Switch via dropdown to 'ja'
+sel.value = 'ja';
+sel.dispatchEvent({{ type: 'change' }});
+const h2Ja = h2.textContent;
+const titleJa = sectionsWrap.querySelector('[data-ag-i18n-role="section-title"]').textContent;
+const valJa = sel.value;
+
+// Switch back to 'en-US'
+dom.updateBundle(enBundle, fakeDoc, {{}});
+state = Object.assign({{}}, state, {{ locale: 'en-US', config: {{ locale: 'en-US' }}, bundle: enBundle }});
+ctrl.sync();
+const h2En = h2.textContent;
+const titleEn = sectionsWrap.querySelector('[data-ag-i18n-role="section-title"]').textContent;
+
+console.log(JSON.stringify({{ h2Zh, countZh, titleZh, valZh, h2Ja, titleJa, valJa, h2En, titleEn }}));
+"""
+        res = _run_node(script)
+        self.assertEqual(res["h2Zh"], "常规")
+        self.assertEqual(res["countZh"], 1)
+        self.assertEqual(res["titleZh"], "语言 (Language)")
+        self.assertEqual(res["valZh"], "zh-CN")
+        self.assertEqual(res["h2Ja"], "一般")
+        self.assertEqual(res["titleJa"], "言語 (Language)")
+        self.assertEqual(res["valJa"], "ja")
+        self.assertEqual(res["h2En"], "General")
+        self.assertEqual(res["titleEn"], "Language")
+
 
 if __name__ == "__main__":
     unittest.main()

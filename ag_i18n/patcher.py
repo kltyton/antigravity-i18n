@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from .asar import extract_asar, pack_asar
+from .asar import extract_asar, pack_asar, read_asar_header
 from .paths import (
     LOCALES_DIR,
     RUNTIME_DIR,
@@ -272,13 +272,16 @@ def deploy_locales(
 
 
 def _build_preload_bundle(runtime_dir: Path) -> str:
-    """Wrap pure-JS core + preload DOM observer in one sandbox-safe marker block."""
+    """Wrap pure-JS core + settings UI + preload DOM observer in one sandbox-safe marker block."""
     core_js = (runtime_dir / "core.js").read_text(encoding="utf-8")
+    settings_js_path = runtime_dir / "settings-ui.js"
+    settings_js = settings_js_path.read_text(encoding="utf-8") if settings_js_path.is_file() else ""
     preload_js = (runtime_dir / "preload-i18n.js").read_text(encoding="utf-8")
     return (
         f"\n{PRELOAD_START}\n"
         f";(function() {{\n"
         f"{core_js}\n"
+        f"{settings_js}\n"
         f"{preload_js}\n"
         f"}})();\n"
         f"{PRELOAD_END}\n"
@@ -480,3 +483,54 @@ def list_locales(user_i18n_dir: Optional[Path] = None) -> Tuple[str, List[dict]]
             except Exception:
                 continue
     return configured, items
+
+
+def _asar_has_path(header_node: dict, parts: Tuple[str, ...]) -> bool:
+    cur = header_node
+    for part in parts:
+        files = cur.get("files") if isinstance(cur, dict) else None
+        if not isinstance(files, dict) or part not in files:
+            return False
+        cur = files[part]
+    return True
+
+
+def inspect_install_status(
+    app_dir: Optional[Path] = None,
+    user_i18n_dir: Optional[Path] = None,
+) -> dict:
+    """Fast header-only status inspection without extracting ASAR contents."""
+    status: dict = {
+        "appDirFound": False,
+        "appDir": "",
+        "asarPath": "",
+        "installed": False,
+        "hasSettingsUi": False,
+        "hasContextMeter": False,
+        "hasBackup": False,
+        "configuredLocale": "auto",
+        "userI18nDir": str(user_i18n_dir or get_user_i18n_dir()),
+        "locales": [],
+    }
+    try:
+        resolved_app = Path(app_dir) if app_dir else detect_antigravity_app_dir()
+        resources_dir = get_resources_dir(resolved_app)
+        asar_path = resources_dir / "app.asar"
+        status["appDirFound"] = asar_path.is_file()
+        status["appDir"] = str(resolved_app)
+        status["asarPath"] = str(asar_path)
+        status["hasBackup"] = (
+            (resources_dir / "app.asar.ag-i18n.bak").is_file()
+            or (resources_dir / "app.asar.disabled").is_file()
+        )
+        if asar_path.is_file():
+            header, _ = read_asar_header(asar_path)
+            status["installed"] = _asar_has_path(header, ("dist", "ag-i18n", "electron-i18n.js"))
+            status["hasContextMeter"] = _asar_has_path(header, ("dist", "meter-main.js"))
+    except Exception as exc:
+        status["error"] = str(exc)
+
+    configured, locales = list_locales(user_i18n_dir=user_i18n_dir)
+    status["configuredLocale"] = configured
+    status["locales"] = locales
+    return status

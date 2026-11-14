@@ -9,18 +9,25 @@
     var coreMod = typeof require === 'function'
       ? (function () { try { return require('./core'); } catch (_e) { return null; } })()
       : null;
-    module.exports = factory(coreMod || (root && root.AntigravityI18nCore));
+    var settingsMod = typeof require === 'function'
+      ? (function () { try { return require('./settings-ui'); } catch (_e) { return null; } })()
+      : null;
+    module.exports = factory(
+      coreMod || (root && root.AntigravityI18nCore),
+      settingsMod || (root && root.AntigravityI18nSettingsUi)
+    );
   }
   if (typeof globalThis !== 'undefined' && globalThis.window && globalThis.document) {
     // Auto-bootstrap when bundled inside dist/preload.js
     var preloadedCore = (globalThis.AntigravityI18nCore) || null;
+    var preloadedSettings = (globalThis.AntigravityI18nSettingsUi) || null;
     if (preloadedCore && !globalThis.__AG_I18N_PRELOAD_STARTED__) {
       globalThis.__AG_I18N_PRELOAD_STARTED__ = true;
-      var mod = factory(preloadedCore);
+      var mod = factory(preloadedCore, preloadedSettings);
       mod.bootstrapBrowserPreload(globalThis);
     }
   }
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (Core) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (Core, SettingsUi) {
   'use strict';
 
   var ALLOWED_PROTOCOLS = { 'file:': 1, 'data:': 1, 'about:': 1, 'vscode-webview:': 1, 'chrome-extension:': 1 };
@@ -51,6 +58,21 @@
     var observedFrames = new WeakSet();
     var pendingNodes = new Set();
     var flushScheduled = false;
+    var afterFlushListeners = [];
+
+    function onAfterFlush(fn) {
+      if (typeof fn === 'function') afterFlushListeners.push(fn);
+    }
+
+    function notifyAfterFlush() {
+      for (var i = 0; i < afterFlushListeners.length; i++) {
+        try {
+          afterFlushListeners[i]();
+        } catch (_err) {
+          // Ignore listener failure
+        }
+      }
+    }
 
     function isNodeProtected(node) {
       if (!node) return true;
@@ -167,12 +189,14 @@
 
       raf(function () {
         flushScheduled = false;
-        if (pendingNodes.size === 0) return;
-        var batch = Array.from(pendingNodes);
-        pendingNodes.clear();
-        for (var i = 0; i < batch.length; i++) {
-          scanSubtree(batch[i]);
+        if (pendingNodes.size > 0) {
+          var batch = Array.from(pendingNodes);
+          pendingNodes.clear();
+          for (var i = 0; i < batch.length; i++) {
+            scanSubtree(batch[i]);
+          }
         }
+        notifyAfterFlush();
       });
     }
 
@@ -249,6 +273,8 @@
       scanSubtree: scanSubtree,
       observeRoot: observeRoot,
       updateBundle: updateBundle,
+      onAfterFlush: onAfterFlush,
+      getOriginalText: function (node) { return textOriginals.get(node); },
       getTranslator: function () { return translator; }
     };
   }
@@ -285,6 +311,39 @@
     }
 
     var domTranslator = createDomTranslator(initialState.bundle, Core);
+    var settingsLib = SettingsUi || (win && win.AntigravityI18nSettingsUi) || null;
+    var settingsCtrl = null;
+    if (settingsLib && typeof settingsLib.createSettingsController === 'function') {
+      settingsCtrl = settingsLib.createSettingsController({
+        document: win.document,
+        getState: function () { return initialState; },
+        getOriginalText: domTranslator.getOriginalText,
+        onSelectLocale: function (nextLocale) {
+          if (ipcRenderer && typeof ipcRenderer.invoke === 'function') {
+            return ipcRenderer.invoke('ag-i18n:set-locale', nextLocale).then(function (updated) {
+              if (updated && typeof updated === 'object') {
+                initialState = updated;
+                if (updated.bundle) {
+                  domTranslator.updateBundle(updated.bundle, win.document, win);
+                }
+                if (settingsCtrl) settingsCtrl.sync();
+              }
+              return updated;
+            });
+          }
+          return Promise.resolve(initialState);
+        },
+        onOpenFolder: function () {
+          if (ipcRenderer && typeof ipcRenderer.invoke === 'function') {
+            return ipcRenderer.invoke('ag-i18n:open-locales-folder');
+          }
+          return Promise.resolve('');
+        }
+      });
+      domTranslator.onAfterFlush(function () {
+        if (settingsCtrl) settingsCtrl.sync();
+      });
+    }
 
     if (contextBridge && typeof contextBridge.exposeInMainWorld === 'function' && ipcRenderer) {
       try {
@@ -316,6 +375,9 @@
       if (rootEl) {
         domTranslator.observeRoot(rootEl, win);
       }
+      if (settingsCtrl) {
+        settingsCtrl.sync();
+      }
     }
 
     if (win.document.readyState === 'loading') {
@@ -330,6 +392,9 @@
         initialState = nextState;
         if (nextState.bundle) {
           domTranslator.updateBundle(nextState.bundle, win.document, win);
+        }
+        if (settingsCtrl) {
+          settingsCtrl.sync();
         }
       });
     }

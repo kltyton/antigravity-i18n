@@ -12,6 +12,7 @@ from ag_i18n.patcher import (
     PRELOAD_START,
     VIEW_MENU_PATCHED,
     deploy_locales,
+    inspect_install_status,
     install_patch,
     list_locales,
     restore_patch,
@@ -127,7 +128,13 @@ class AsarAndPatcherTests(unittest.TestCase):
             self.assertIn(VIEW_MENU_PATCHED, menu_txt)
             self.assertNotIn("Antigravity Chinese Localization Engine", menu_txt)
             self.assertIn(PRELOAD_START, preload_txt)
+            self.assertIn("AntigravityI18nSettingsUi", preload_txt)
             self.assertNotIn("Antigravity Chinese Localization Engine", preload_txt)
+
+            status_before_restore = inspect_install_status(app_dir=app_dir, user_i18n_dir=user_dir)
+            self.assertTrue(status_before_restore["installed"])
+            self.assertTrue(status_before_restore["hasContextMeter"])
+            self.assertEqual(status_before_restore["configuredLocale"], "ja")
 
             # Third-party Context Meter remains completely untouched
             self.assertIn("Antigravity Context Meter preload Injection Start", preload_txt)

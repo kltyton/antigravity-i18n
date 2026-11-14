@@ -23,9 +23,9 @@ Instead of hardcoding translated strings inside Electron scripts or requiring re
   | `ja` | 日本語 | `pt-BR` | Português (Brasil) |
   | `ko` | 한국어 | `ru` | Русский |
 - **External Data-Driven Architecture**: Language bundles (`locales/*.json`) and your preference (`config.json`) live outside `app.asar` (e.g., `%APPDATA%\antigravity\i18n\` on Windows, `~/Library/Application Support/antigravity/i18n/` on macOS, `~/.config/antigravity/i18n/` on Linux).
-- **Live Switching Without Restarting**: Switch languages anytime from the top **Language** menu or system tray menu, or follow your OS language automatically (`"auto"`).
+- **Live Switching Without Restarting**: Switch languages anytime from **Settings → General → Language**, the system tray **Language** submenu, or the native top menu bar — or follow your OS language automatically (`"auto"`).
 - **Full Desktop + Web UI Coverage**:
-  - **Renderer DOM Runtime (`runtime/preload-i18n.js`)**: WeakMap-backed original text tracking, Shadow DOM & same-origin iframe observation, smooth `requestAnimationFrame` mutation batching, and automatic exclusion of code blocks, Monaco editors, terminals, and model selectors.
+  - **Renderer DOM & Settings UI (`runtime/preload-i18n.js`, `runtime/settings-ui.js`)**: WeakMap-backed original text tracking, Shadow DOM & same-origin iframe observation, native-styled **Display Language** selector injected into **Settings → General**, smooth `requestAnimationFrame` mutation batching, and automatic exclusion of code blocks, Monaco editors, terminals, and model selectors.
   - **Electron Main Process (`runtime/electron-i18n.js`, `runtime/menu-i18n.js`)**: Hooks `Menu`, `Tray`, native context menus, system dialogs (`showMessageBox`, `showOpenDialog`, `showSaveDialog`), desktop notifications, window titles, and `data:text/html` splash/disconnected overlays while keeping internal Electron menu lookups intact.
   - **Smart Matching Engine (`runtime/core.js`)**: Handles exact phrases, context-aware menu overrides, ellipsis/punctuation normalization (`...` / `…`), keyboard accelerators (`&File`), trailing shortcut splits, and declarative regex rules (`patterns`).
 - **Safe Third-Party Mod Coexistence**: Uses paired marker blocks and a dedicated `dist/ag-i18n/` namespace while preserving `app.asar.unpacked` metadata and external ASAR extensions (such as `antigravity-context-viewer`). Supports surgical uninstall (`restore.py`) without removing other mods.
@@ -37,6 +37,7 @@ Instead of hardcoding translated strings inside Electron scripts or requiring re
 
 ```text
 antigravity-i18n/
+├── gui.py                  # Standalone desktop GUI manager (Tkinter, double-click or bundle as .exe)
 ├── cli.py                  # Unified CLI (install / restore / lang / langs / extract / check)
 ├── install.py              # Standalone quick installer
 ├── restore.py              # Standalone restorer (surgical or --hard backup)
@@ -50,6 +51,7 @@ antigravity-i18n/
 │   ├── core.js             # Shared UMD i18n lookup & regex matching engine
 │   ├── electron-i18n.js    # Main-process hooks (Menu, Tray, Dialog, Notification, HTML overlays)
 │   ├── menu-i18n.js        # Live "Language" submenu builder & item tracker
+│   ├── settings-ui.js      # Native-styled in-app Settings -> General -> Language picker
 │   └── preload-i18n.js     # Sandbox-safe renderer WeakMap DOM & Shadow DOM translator
 ├── locales/
 │   ├── _template.json      # Canonical English source template
@@ -70,9 +72,15 @@ antigravity-i18n/
 
 ## Quick Start
 
-### 1. Install
+### 1. Install (GUI Executable or Source)
 
-Close **Antigravity Desktop**, then run:
+**Option A — Pre-built Windows Executable (No Python Required):**
+
+Download `antigravity-i18n-gui-windows-x64.exe` (or the full `.zip` bundle) from [GitHub Releases](https://github.com/kltyton/antigravity-i18n/releases), close Antigravity Desktop, double-click the executable, pick a language, and click **Install / Update i18n**.
+
+**Option B — From Source (Windows / macOS / Linux):**
+
+Close **Antigravity Desktop**, then run `python gui.py` for the desktop GUI or install via CLI:
 
 ```bash
 python cli.py install
@@ -94,7 +102,7 @@ python cli.py install --app-dir "D:\Apps\Antigravity"
 
 ### 2. Switch Languages Anytime
 
-Launch Antigravity and use the **Language** submenu in the top menu bar or system tray icon, or update via CLI:
+Launch Antigravity and switch live in **Settings → General → Language**, or from the system tray icon / native menu bar **Language** submenu, or update via CLI:
 
 ```bash
 # List installed language packs

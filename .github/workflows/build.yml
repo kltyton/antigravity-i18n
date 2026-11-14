@@ -32,6 +32,7 @@ jobs:
           node --check runtime/core.js
           node --check runtime/menu-i18n.js
           node --check runtime/electron-i18n.js
+          node --check runtime/settings-ui.js
           node --check runtime/preload-i18n.js
 
       - name: Validate locale packs
@@ -66,9 +67,13 @@ jobs:
       - name: Install PyInstaller
         run: pip install pyinstaller
 
-      - name: Build installer and restorer
+      - name: Build GUI and CLI executables
         shell: bash
         run: |
+          pyinstaller --onefile --windowed --name "antigravity-i18n-gui-${{ matrix.target }}" \
+            --add-data "locales${{ matrix.sep }}locales" \
+            --add-data "runtime${{ matrix.sep }}runtime" \
+            gui.py
           pyinstaller --onefile --name "antigravity-i18n-install-${{ matrix.target }}" \
             --add-data "locales${{ matrix.sep }}locales" \
             --add-data "runtime${{ matrix.sep }}runtime" \

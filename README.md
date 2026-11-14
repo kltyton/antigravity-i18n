@@ -6,9 +6,11 @@
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/)
 [![Supported Languages](https://img.shields.io/badge/Languages-10%20Locales-brightgreen.svg)](locales)
 
-An open-source, data-driven **multi-language internationalization (i18n) framework and runtime engine** for **Google Antigravity Desktop**.
+An open-source, data-driven **multi-language internationalization (i18n) framework and runtime engine** for **Google Antigravity Desktop** and **Google Antigravity IDE**.
 
-Instead of hardcoding translated strings inside Electron scripts or requiring re-patching whenever you want to switch languages, `antigravity-i18n` separates a lightweight runtime engine from external JSON locale bundles stored in your user configuration directory — enabling **instant live language switching**, **OS locale auto-detection**, and **compatibility with third-party ASAR extensions**.
+Instead of hardcoding translated strings inside Electron scripts or requiring re-patching whenever you want to switch languages, `antigravity-i18n` separates a lightweight runtime engine from external JSON locale bundles stored in your user configuration directory — enabling **instant live language switching**, **OS locale auto-detection**, and **compatibility with third-party mods**.
+
+For **Antigravity IDE** (which is based on VS Code), `antigravity-i18n` strictly localizes **only the Antigravity-specific UI and extensions** (`jetskiAgent`, Antigravity React panels/portals, and `extensions/agy` + `extensions/antigravity-*` via native `package.nls*.json`), leaving VS Code's own workbench UI and Language Packs completely untouched.
 
 ---
 
@@ -44,15 +46,19 @@ antigravity-i18n/
 ├── ag_i18n/
 │   ├── asar.py             # Pure-Python ASAR parser, packer & SHA-256 block integrity
 │   ├── extractor.py        # Lexical/AST UI & menu string extractor
-│   ├── patcher.py          # Marker-safe ASAR installer, legacy migrator & restorer
-│   ├── paths.py            # Cross-platform Windows / macOS / Linux path resolution
+│   ├── ide_patcher.py      # Surgical unpacked installer & extension NLS generator for Antigravity IDE
+│   ├── patcher.py          # Marker-safe ASAR installer, legacy migrator & restorer (Desktop)
+│   ├── paths.py            # Cross-platform Windows / macOS / Linux path & target detection
+│   ├── targets.py          # Unified Desktop + IDE target dispatcher
 │   └── validator.py        # Locale JSON schema, regex, placeholder & coverage checker
 ├── runtime/
 │   ├── core.js             # Shared UMD i18n lookup & regex matching engine
-│   ├── electron-i18n.js    # Main-process hooks (Menu, Tray, Dialog, Notification, HTML overlays)
+│   ├── electron-i18n.js    # Desktop main-process hooks (Menu, Tray, Dialog, Notification, HTML overlays)
+│   ├── ide-bootstrap.mjs   # ESM loader entrypoint for Antigravity IDE out/main.js
+│   ├── ide-main-i18n.cjs   # Scoped vscode:ag-i18n IPC host & config watcher for Antigravity IDE
 │   ├── menu-i18n.js        # Live "Language" submenu builder & item tracker
 │   ├── settings-ui.js      # Native-styled in-app Settings -> General -> Language picker
-│   └── preload-i18n.js     # Sandbox-safe renderer WeakMap DOM & Shadow DOM translator
+│   └── preload-i18n.js     # Sandbox-safe renderer WeakMap DOM & scoped container translator
 ├── locales/
 │   ├── _template.json      # Canonical English source template
 │   ├── en-US.json          # Native English identity pack
@@ -95,6 +101,8 @@ python cli.py install --lang ja
 Custom installation path is supported via `--app-dir`:
 
 ```bash
+python cli.py install --target ide --lang zh-CN     # Antigravity IDE only
+python cli.py install --target desktop --lang zh-CN # Antigravity Desktop only
 python cli.py install --app-dir "D:\Apps\Antigravity"
 ```
 

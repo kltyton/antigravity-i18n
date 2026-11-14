@@ -6,9 +6,11 @@
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/)
 [![支持语言](https://img.shields.io/badge/%E6%94%AF%E6%8C%81%E8%AF%AD%E8%A8%80-10%20%E7%A7%8D%E4%B8%BB%E6%B5%81%E8%AF%AD%E8%A8%80-brightgreen.svg)](locales)
 
-面向 **Google Antigravity Desktop** 的开源、数据驱动型 **通用多语言国际化（i18n）框架与运行时引擎**。
+面向 **Google Antigravity Desktop** 与 **Google Antigravity IDE** 的开源、数据驱动型 **通用多语言国际化（i18n）框架与运行时引擎**。
 
-与将单一译文硬编码进 `app.asar` 的传统脚本补丁不同，`antigravity-i18n` 将轻量级国际化运行时引擎与外部 JSON 语言包彻底解耦——支持 **跟随系统语言自动切换**、**应用内实时无重启切换语言**，并与第三方 ASAR 插件干净共存。
+与将单一译文硬编码进程序文件的传统脚本补丁不同，`antigravity-i18n` 将轻量级国际化运行时引擎与外部 JSON 语言包彻底解耦——支持 **跟随系统语言自动切换**、**应用内实时无重启切换语言**，并与第三方扩展干净共存。
+
+针对基于 VS Code 的 **Antigravity IDE**：本工具**仅汉化 / 本地化其中 Google Antigravity 专属部分**（Agent Manager / Settings 独立窗口、Workbench 中的 Antigravity 面板与浮层，以及 `agy` / `antigravity-*` 内置扩展的 `package.nls*.json`），**完全不覆盖、不重复处理 VS Code 原生界面或官方语言包**。
 
 ---
 
@@ -44,15 +46,19 @@ antigravity-i18n/
 ├── ag_i18n/
 │   ├── asar.py             # 纯 Python ASAR 解析、打包与 SHA-256 完整性计算
 │   ├── extractor.py        # 词法/语法级前端与 Electron 菜单词条提取器
-│   ├── patcher.py          # 成对标记安装器、旧版补丁平滑迁移与卸载器
-│   ├── paths.py            # Windows / macOS / Linux 跨平台路径解析
+│   ├── ide_patcher.py      # Antigravity IDE 外科手术式接入与扩展 package.nls 生成器
+│   ├── patcher.py          # Desktop ASAR 成对标记安装器、旧版迁移与卸载器
+│   ├── paths.py            # Windows / macOS / Linux 跨平台路径与双产品检测
+│   ├── targets.py          # Desktop + IDE 统一目标调度模块
 │   └── validator.py        # 语言包 JSON 结构、正则语法、占位符与覆盖率校验器
 ├── runtime/
 │   ├── core.js             # 前后端共用的通用 UMD i18n 匹配引擎
-│   ├── electron-i18n.js    # 主进程统一 Hook（菜单、托盘、对话框、通知、HTML 提示页）
+│   ├── electron-i18n.js    # Desktop 主进程统一 Hook（菜单、托盘、对话框、通知、HTML 提示页）
+│   ├── ide-bootstrap.mjs   # Antigravity IDE out/main.js ESM 引导入口
+│   ├── ide-main-i18n.cjs   # Antigravity IDE 作用域隔离的 vscode:ag-i18n IPC 服务
 │   ├── menu-i18n.js        # 实时“语言”子菜单构造与状态同步工具
 │   ├── settings-ui.js      # 应用内“设置 → 常规 → 语言”切换面板注入器
-│   └── preload-i18n.js     # 兼容沙箱环境的 WeakMap DOM / Shadow DOM 翻译运行时
+│   └── preload-i18n.js     # 兼容沙箱与作用域隔离的 WeakMap DOM 翻译运行时
 ├── locales/
 │   ├── _template.json      # 标准英文源文本模板
 │   ├── en-US.json          # 原生英文还原包
@@ -95,6 +101,8 @@ python cli.py install --lang zh-CN
 如需指定自定义安装路径：
 
 ```bash
+python cli.py install --target ide --lang zh-CN     # 仅安装到 Antigravity IDE
+python cli.py install --target desktop --lang zh-CN # 仅安装到 Antigravity Desktop
 python cli.py install --app-dir "D:\Apps\Antigravity"
 ```
 

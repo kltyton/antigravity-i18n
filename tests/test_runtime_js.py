@@ -513,6 +513,189 @@ console.log(JSON.stringify({{ h2Zh, countZh, titleZh, valZh, h2Ja, titleJa, valJ
         self.assertEqual(res["h2En"], "General")
         self.assertEqual(res["titleEn"], "Language")
 
+    def test_ide_scoped_dom_isolation_and_vscode_file_protocol(self):
+        script = r"""
+const core = require('./runtime/core');
+const preload = require('./runtime/preload-i18n');
+
+const zhBundle = {
+  meta: { locale: 'zh-CN', punctuationStyle: 'cjk' },
+  exact: { 'General': '常规', 'Extensions': '扩展', 'Review Policy': '审查策略', 'Sign in to Antigravity': '登录 Antigravity' },
+  patterns: []
+};
+const enBundle = { meta: { locale: 'en-US', punctuationStyle: 'ascii' }, exact: {}, patterns: [] };
+
+function makeTree(tag, attrs, textVal, scopedHit) {
+  const el = {
+    nodeType: 1,
+    tagName: tag.toUpperCase(),
+    _attrs: Object.assign({}, attrs || {}),
+    _scopedHit: !!scopedHit,
+    childNodes: [],
+    hasAttribute(k) { return Object.prototype.hasOwnProperty.call(this._attrs, k); },
+    getAttribute(k) { return this._attrs[k]; },
+    setAttribute(k, v) { this._attrs[k] = String(v); },
+    closest(sel) {
+      if (this._scopedHit && String(sel).indexOf('.antigravity-') !== -1) return this;
+      return null;
+    },
+    querySelectorAll(sel) {
+      const out = [];
+      const walk = (node) => {
+        for (const ch of (node.childNodes || [])) {
+          if (ch.nodeType === 1) {
+            if (ch._scopedHit && String(sel).indexOf('.antigravity-') !== -1) {
+              out.push(ch);
+            } else {
+              walk(ch);
+            }
+          }
+        }
+      };
+      walk(this);
+      return out;
+    }
+  };
+  if (textVal !== undefined) {
+    el.childNodes.push({ nodeType: 3, nodeValue: textVal, parentElement: el });
+  }
+  return el;
+}
+
+const workbenchRoot = makeTree('div', { class: 'monaco-workbench' }, undefined, false);
+const vscodeExplorerTitle = makeTree('span', { class: 'explorer-title' }, 'Extensions', false);
+const vscodeSettingTitle = makeTree('span', { class: 'setting-title' }, 'General', false);
+const agPanelText = makeTree('span', {}, 'Review Policy', true);
+const agPortalText = makeTree('span', {}, 'Sign in to Antigravity', true);
+workbenchRoot.childNodes.push(vscodeExplorerTitle, vscodeSettingTitle, agPanelText, agPortalText);
+
+const fakeDoc = { documentElement: workbenchRoot };
+const scopeOpts = { scopeSelectors: preload.IDE_ANTIGRAVITY_SCOPE_SELECTORS, translateTitle: false };
+const domT = preload.createDomTranslator(zhBundle, core, scopeOpts);
+
+domT.scanSubtree(workbenchRoot);
+const afterZh = {
+  vscodeExplorer: vscodeExplorerTitle.childNodes[0].nodeValue,
+  vscodeSetting: vscodeSettingTitle.childNodes[0].nodeValue,
+  agPanel: agPanelText.childNodes[0].nodeValue,
+  agPortal: agPortalText.childNodes[0].nodeValue,
+};
+
+domT.updateBundle(enBundle, fakeDoc);
+const afterEn = {
+  vscodeExplorer: vscodeExplorerTitle.childNodes[0].nodeValue,
+  vscodeSetting: vscodeSettingTitle.childNodes[0].nodeValue,
+  agPanel: agPanelText.childNodes[0].nodeValue,
+  agPortal: agPortalText.childNodes[0].nodeValue,
+};
+
+const origCfg = globalThis.__AG_I18N_PRELOAD_CONFIG__;
+globalThis.__AG_I18N_PRELOAD_CONFIG__ = function (win) {
+  const href = String((win && win.location && win.location.href) || '');
+  if (/workbench-jetski-agent\.html/.test(href)) {
+    return { enabled: true, ipcPrefix: 'vscode:ag-i18n:', scopeSelectors: null, translateTitle: true, injectSettingsCard: true, exposeGlobal: false };
+  }
+  return { enabled: true, ipcPrefix: 'vscode:ag-i18n:', scopeSelectors: 'ide-antigravity', translateTitle: false, injectSettingsCard: false, exposeGlobal: false };
+};
+const cfgJetski = preload.resolvePreloadConfig({ location: { href: 'vscode-file://vscode-app/out/vs/code/electron-browser/workbench/workbench-jetski-agent.html' } });
+const cfgWb = preload.resolvePreloadConfig({ location: { href: 'vscode-file://vscode-app/out/vs/code/electron-browser/workbench/workbench.html' } });
+globalThis.__AG_I18N_PRELOAD_CONFIG__ = origCfg;
+
+console.log(JSON.stringify({
+  afterZh,
+  afterEn,
+  allowVscodeFile: preload.isAntigravityUiLocation({ protocol: 'vscode-file:', hostname: 'vscode-app' }),
+  cfgJetski,
+  cfgWb
+}));
+"""
+        res = _run_node(script)
+        self.assertTrue(res["allowVscodeFile"])
+        # VS Code workbench nodes MUST stay untouched in English
+        self.assertEqual(res["afterZh"]["vscodeExplorer"], "Extensions")
+        self.assertEqual(res["afterZh"]["vscodeSetting"], "General")
+        # Antigravity nodes inside workbench MUST be translated
+        self.assertEqual(res["afterZh"]["agPanel"], "审查策略")
+        self.assertEqual(res["afterZh"]["agPortal"], "登录 Antigravity")
+        # Switching back to en-US restores Antigravity nodes while leaving VS Code nodes untouched
+        self.assertEqual(res["afterEn"]["vscodeExplorer"], "Extensions")
+        self.assertEqual(res["afterEn"]["vscodeSetting"], "General")
+        self.assertEqual(res["afterEn"]["agPanel"], "Review Policy")
+        self.assertEqual(res["afterEn"]["agPortal"], "Sign in to Antigravity")
+        # Config resolver assertions
+        self.assertEqual(res["cfgJetski"]["ipcPrefix"], "vscode:ag-i18n:")
+        self.assertIsNone(res["cfgJetski"]["scopeSelectors"])
+        self.assertTrue(res["cfgJetski"]["injectSettingsCard"])
+        self.assertEqual(res["cfgWb"]["scopeSelectors"], preload_list := res["cfgWb"]["scopeSelectors"])
+        self.assertIsInstance(preload_list, list)
+        self.assertFalse(res["cfgWb"]["translateTitle"])
+        self.assertFalse(res["cfgWb"]["injectSettingsCard"])
+
+    def test_ide_main_i18n_ipc_and_broadcast(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            i18n_dir = Path(tmp) / "i18n"
+            locales_sub = i18n_dir / "locales"
+            locales_sub.mkdir(parents=True, exist_ok=True)
+            for name in ("en-US.json", "zh-CN.json", "ja.json"):
+                (locales_sub / name).write_text((LOCALES_DIR / name).read_text(encoding="utf-8"), encoding="utf-8")
+            (i18n_dir / "config.json").write_text('{"locale":"zh-CN"}', encoding="utf-8")
+
+            script = f"""
+process.env.AG_I18N_NO_AUTO_INIT = '1';
+const ideMain = require('./runtime/ide-main-i18n.cjs');
+const core = require('./runtime/core');
+
+const handlers = {{}};
+const onHandlers = {{}};
+const sentMessages = [];
+const wc = {{
+  isDestroyed: () => false,
+  send: (ch, payload) => sentMessages.push({{ ch, locale: payload && payload.locale }})
+}};
+const mockElectron = {{
+  app: {{ getLocale: () => 'zh-CN', getPath: () => {json.dumps(tmp)} }},
+  ipcMain: {{
+    on: (ch, fn) => {{ onHandlers[ch] = fn; }},
+    handle: (ch, fn) => {{ handlers[ch] = fn; }}
+  }},
+  webContents: {{ getAllWebContents: () => [wc] }},
+  BrowserWindow: {{ getAllWindows: () => [] }},
+  shell: {{ openPath: async () => '' }}
+}};
+
+ideMain.init({{
+  electron: mockElectron,
+  core,
+  userI18nDir: {json.dumps(str(i18n_dir))},
+  bundledLocalesDir: {json.dumps(str(locales_sub))}
+}});
+
+const ev = {{}};
+onHandlers['vscode:ag-i18n:get-state-sync'](ev);
+const syncLocale = ev.returnValue && ev.returnValue.locale;
+
+Promise.resolve(handlers['vscode:ag-i18n:set-locale']({{}}, 'ja')).then((res) => {{
+  const fs = require('fs');
+  const saved = JSON.parse(fs.readFileSync({json.dumps(str(i18n_dir / 'config.json'))}, 'utf8'));
+  console.log(JSON.stringify({{
+    syncLocale,
+    handlerKeys: Object.keys(handlers).sort(),
+    nextLocale: res.locale,
+    savedLocale: saved.locale,
+    broadcasts: sentMessages
+  }}));
+}});
+"""
+            res = _run_node(script)
+            self.assertEqual(res["syncLocale"], "zh-CN")
+            self.assertEqual(
+                res["handlerKeys"],
+                ["vscode:ag-i18n:list-locales", "vscode:ag-i18n:open-locales-folder", "vscode:ag-i18n:set-locale"],
+            )
+            self.assertEqual(res["nextLocale"], "ja")
+            self.assertEqual(res["savedLocale"], "ja")
+            self.assertTrue(any(m["ch"] == "vscode:ag-i18n:locale-changed" and m["locale"] == "ja" for m in res["broadcasts"]))
+
 
 if __name__ == "__main__":
     unittest.main()

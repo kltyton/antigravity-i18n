@@ -34,6 +34,8 @@ jobs:
           node --check runtime/electron-i18n.js
           node --check runtime/settings-ui.js
           node --check runtime/preload-i18n.js
+          node --check runtime/ide-main-i18n.cjs
+          node --check runtime/ide-bootstrap.mjs
 
       - name: Validate locale packs
         run: python cli.py check

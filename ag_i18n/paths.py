@@ -82,3 +82,158 @@ def get_browser_cache_dir() -> Path:
         return Path.home() / "Library" / "Application Support" / "antigravity" / "Cache" / "Cache_Data"
     xdg = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     return xdg / "antigravity" / "Cache" / "Cache_Data"
+
+
+def get_ide_app_resources_dir(app_dir: Path) -> Path:
+    """Return the unpacked resources/app directory for an Antigravity IDE install."""
+    if app_dir.name == "app" and (app_dir / "product.json").is_file():
+        return app_dir
+    if app_dir.name == "resources" and (app_dir / "app" / "product.json").is_file():
+        return app_dir / "app"
+    if sys.platform == "darwin":
+        if (app_dir / "Contents" / "Resources" / "app" / "product.json").is_file():
+            return app_dir / "Contents" / "Resources" / "app"
+        if app_dir.name == "Resources" and (app_dir / "app" / "product.json").is_file():
+            return app_dir / "app"
+    return app_dir / "resources" / "app"
+
+
+def is_desktop_app_dir(app_dir: Path) -> bool:
+    """Return True if *app_dir* points to an Antigravity Desktop installation (ASAR layout)."""
+    return (get_resources_dir(app_dir) / "app.asar").is_file()
+
+
+def is_ide_app_dir(app_dir: Path) -> bool:
+    """Return True if *app_dir* points to an unpacked Antigravity IDE installation."""
+    import json
+
+    if (get_resources_dir(app_dir) / "app.asar").is_file():
+        return False
+    res_app = get_ide_app_resources_dir(app_dir)
+    product_file = res_app / "product.json"
+    if not product_file.is_file() or not (res_app / "out" / "main.js").is_file():
+        return False
+    try:
+        data = json.loads(product_file.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    app_name = str(data.get("applicationName", "")).lower()
+    name_short = str(data.get("nameShort", "")).lower()
+    return "antigravity-ide" in app_name or "antigravity ide" in name_short
+
+
+def _iter_windows_ide_registry_candidates() -> list[Path]:
+    """Query Windows Uninstall registry keys for Antigravity IDE install paths."""
+    if sys.platform != "win32":
+        return []
+    import winreg
+
+    out: list[Path] = []
+    subkey_path = r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            root_key = winreg.OpenKey(hive, subkey_path)
+        except OSError:
+            continue
+        with root_key:
+            idx = 0
+            while True:
+                try:
+                    sub_name = winreg.EnumKey(root_key, idx)
+                    idx += 1
+                except OSError:
+                    break
+                try:
+                    with winreg.OpenKey(root_key, sub_name) as item:
+                        display_name, _ = winreg.QueryValueEx(item, "DisplayName")
+                        if "antigravity ide" not in str(display_name).lower():
+                            continue
+                        for val_name in ("InstallLocation", "DisplayIcon"):
+                            try:
+                                raw_val, _ = winreg.QueryValueEx(item, val_name)
+                            except OSError:
+                                continue
+                            raw_str = str(raw_val).strip().strip('"').split(",")[0].strip()
+                            if not raw_str:
+                                continue
+                            cand = Path(raw_str)
+                            if cand.is_file():
+                                cand = cand.parent
+                            out.append(cand)
+                except OSError:
+                    continue
+    return out
+
+
+def detect_antigravity_ide_dir() -> Optional[Path]:
+    """Auto-detect the unpacked Antigravity IDE installation directory, or None if not installed."""
+    env = os.environ.get("ANTIGRAVITY_IDE_APP_DIR")
+    if env:
+        env_path = Path(env)
+        if is_ide_app_dir(env_path):
+            return env_path
+        return env_path
+
+    candidates: list[Path] = []
+    if sys.platform == "win32":
+        candidates.extend(_iter_windows_ide_registry_candidates())
+        local = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local"))
+        prog = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
+        candidates.extend([
+            local / "Programs" / "Antigravity IDE",
+            prog / "Antigravity IDE",
+        ])
+    elif sys.platform == "darwin":
+        candidates.extend([
+            Path("/Applications/Antigravity IDE.app"),
+            Path.home() / "Applications" / "Antigravity IDE.app",
+        ])
+    else:
+        candidates.extend([
+            Path("/usr/share/antigravity-ide"),
+            Path("/opt/Antigravity IDE"),
+            Path("/opt/antigravity-ide"),
+            Path.home() / ".local" / "share" / "antigravity-ide",
+        ])
+
+    for cand in candidates:
+        if is_ide_app_dir(cand):
+            return cand
+    return None
+
+
+def detect_antigravity_targets() -> dict[str, Path]:
+    """Return mapping of detected installations: {'desktop': Path, 'ide': Path}."""
+    targets: dict[str, Path] = {}
+    desktop = detect_antigravity_app_dir()
+    if is_desktop_app_dir(desktop):
+        targets["desktop"] = desktop
+    ide = detect_antigravity_ide_dir()
+    if ide is not None and is_ide_app_dir(ide):
+        targets["ide"] = ide
+    return targets
+
+
+def is_process_running(target_kind: str) -> bool:
+    """Best-effort check whether Antigravity Desktop or Antigravity IDE is currently running."""
+    import subprocess
+
+    if sys.platform == "win32":
+        image = "Antigravity IDE.exe" if target_kind == "ide" else "Antigravity.exe"
+        try:
+            res = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {image}", "/NH"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            return image.lower() in (res.stdout or "").lower()
+        except Exception:
+            return False
+    pattern = "Antigravity IDE" if target_kind == "ide" else "Antigravity"
+    try:
+        res = subprocess.run(["pgrep", "-f", pattern], capture_output=True, timeout=5, check=False)
+        return res.returncode == 0
+    except Exception:
+        return False

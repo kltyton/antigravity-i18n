@@ -271,21 +271,26 @@ def deploy_locales(
     return deployed, str(config_data.get("locale", "auto"))
 
 
-def _build_preload_bundle(runtime_dir: Path) -> str:
+def build_preload_bundle(runtime_dir: Path, prelude_js: str = "") -> str:
     """Wrap pure-JS core + settings UI + preload DOM observer in one sandbox-safe marker block."""
     core_js = (runtime_dir / "core.js").read_text(encoding="utf-8")
     settings_js_path = runtime_dir / "settings-ui.js"
     settings_js = settings_js_path.read_text(encoding="utf-8") if settings_js_path.is_file() else ""
     preload_js = (runtime_dir / "preload-i18n.js").read_text(encoding="utf-8")
+    prelude_section = f"{prelude_js.rstrip()}\n" if prelude_js.strip() else ""
     return (
         f"\n{PRELOAD_START}\n"
         f";(function() {{\n"
+        f"{prelude_section}"
         f"{core_js}\n"
         f"{settings_js}\n"
         f"{preload_js}\n"
         f"}})();\n"
         f"{PRELOAD_END}\n"
     )
+
+
+_build_preload_bundle = build_preload_bundle
 
 
 def _patch_main_js(main_js_path: Path) -> bool:

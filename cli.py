@@ -9,38 +9,48 @@ from typing import List, Optional
 
 from ag_i18n import PROJECT_NAME, VERSION
 from ag_i18n.extractor import extract_all_ui_strings
-from ag_i18n.patcher import (
-    install_patch,
-    list_locales,
-    restore_patch,
-    set_configured_locale,
-)
+from ag_i18n.patcher import list_locales, set_configured_locale
 from ag_i18n.paths import LOCALES_DIR, get_user_i18n_dir
+from ag_i18n.targets import TARGET_CHOICES, install_targets, restore_targets
 from ag_i18n.validator import validate_locales_dir
 
 
 def cmd_install(args: argparse.Namespace) -> int:
     app_dir = Path(args.app_dir) if args.app_dir else None
     user_dir = Path(args.user_dir) if args.user_dir else None
-    res = install_patch(app_dir=app_dir, locale=args.lang, user_i18n_dir=user_dir)
+    results = install_targets(
+        target=args.target,
+        app_dir=app_dir,
+        locale=args.lang,
+        user_i18n_dir=user_dir,
+    )
     print(f"[{PROJECT_NAME} v{VERSION}] Installed runtime cleanly.")
-    print(f"  ASAR target   : {res.asar_path}")
-    print(f"  User i18n dir : {res.user_i18n_dir}")
-    print(f"  Active locale : {res.active_locale}")
-    print(f"  Locales synced: {', '.join(res.deployed_locales)}")
-    if res.legacy_reverted_files:
-        print(f"  Migrated files: {', '.join(res.legacy_reverted_files)}")
-    if res.backup_path:
-        print(f"  Backup        : {res.backup_path}")
-    print("Restart Antigravity (or switch language from the tray/menu bar) to take effect.")
+    for kind, res in results:
+        if kind == "ide":
+            print(f"  [IDE] Target  : {res.resources_app_dir}")
+            if res.localized_extensions:
+                print(f"        Exts    : {', '.join(res.localized_extensions)}")
+            if res.backup_dir:
+                print(f"        Backup  : {res.backup_dir}")
+        else:
+            print(f"  [Desktop] ASAR: {res.asar_path}")
+            if res.legacy_reverted_files:
+                print(f"        Migrated: {', '.join(res.legacy_reverted_files)}")
+            if res.backup_path:
+                print(f"        Backup  : {res.backup_path}")
+        print(f"  User i18n dir : {res.user_i18n_dir}")
+        print(f"  Active locale : {res.active_locale}")
+        print(f"  Locales synced: {', '.join(res.deployed_locales)}")
+    print("Restart Antigravity / Antigravity IDE (or switch language in Antigravity Settings) to take effect.")
     return 0
 
 
 def cmd_restore(args: argparse.Namespace) -> int:
     app_dir = Path(args.app_dir) if args.app_dir else None
-    asar_path = restore_patch(app_dir=app_dir, hard=args.hard)
-    mode = "hard backup" if args.hard else "surgical (preserving other ASAR mods)"
-    print(f"[{PROJECT_NAME} v{VERSION}] Restored {asar_path} ({mode}).")
+    restored = restore_targets(target=args.target, app_dir=app_dir, hard=args.hard)
+    mode = "hard backup" if args.hard else "surgical (preserving other mods)"
+    for kind, target_path in restored:
+        print(f"[{PROJECT_NAME} v{VERSION}] Restored {kind}: {target_path} ({mode}).")
     return 0
 
 
@@ -116,20 +126,32 @@ def cmd_check(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=PROJECT_NAME,
-        description="Universal multi-language i18n framework & external locale runtime for Antigravity Desktop.",
+        description="Universal multi-language i18n framework & external locale runtime for Antigravity Desktop and Antigravity IDE.",
     )
     parser.add_argument("--version", action="version", version=f"{PROJECT_NAME} {VERSION}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_inst = sub.add_parser("install", help="Install runtime i18n engine into Antigravity app.asar and deploy locales.")
-    p_inst.add_argument("--app-dir", help="Custom Antigravity installation directory.")
+    p_inst = sub.add_parser("install", help="Install runtime i18n engine and deploy locales.")
+    p_inst.add_argument(
+        "--target",
+        choices=TARGET_CHOICES,
+        default="auto",
+        help="Target product: auto (all detected), desktop, ide, or all (default: auto).",
+    )
+    p_inst.add_argument("--app-dir", help="Custom Antigravity Desktop or IDE installation directory.")
     p_inst.add_argument("--lang", help="Set initial locale (e.g. auto, zh-CN, zh-TW, ja, ko, es, fr, de, pt-BR, ru).")
     p_inst.add_argument("--user-dir", help="Override target user i18n directory.")
     p_inst.set_defaults(func=cmd_install)
 
-    p_rest = sub.add_parser("restore", help="Remove antigravity-i18n runtime cleanly from app.asar.")
-    p_rest.add_argument("--app-dir", help="Custom Antigravity installation directory.")
-    p_rest.add_argument("--hard", action="store_true", help="Restore exact byte-for-byte ASAR backup instead of surgical clean.")
+    p_rest = sub.add_parser("restore", help="Remove antigravity-i18n runtime cleanly.")
+    p_rest.add_argument(
+        "--target",
+        choices=TARGET_CHOICES,
+        default="auto",
+        help="Target product: auto (all detected), desktop, ide, or all (default: auto).",
+    )
+    p_rest.add_argument("--app-dir", help="Custom Antigravity Desktop or IDE installation directory.")
+    p_rest.add_argument("--hard", action="store_true", help="Restore exact backups instead of surgical clean.")
     p_rest.set_defaults(func=cmd_restore)
 
     p_lang = sub.add_parser("lang", help="Change configured default language in config.json.")

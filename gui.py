@@ -13,34 +13,34 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Dict, List, Optional
 
 from ag_i18n import PROJECT_NAME, VERSION
-from ag_i18n.patcher import (
-    deploy_locales,
-    inspect_install_status,
-    install_patch,
-    restore_patch,
-    set_configured_locale,
-)
-from ag_i18n.paths import get_user_i18n_dir
+from ag_i18n.patcher import deploy_locales, set_configured_locale
+from ag_i18n.paths import get_user_i18n_dir, is_process_running
+from ag_i18n.targets import inspect_all_targets, install_targets, restore_targets
 
 
 UI_STRINGS: Dict[str, Dict[str, str]] = {
     "zh": {
         "title": f"{PROJECT_NAME} v{VERSION} — 多语言安装与管理工具",
-        "subtitle": "非破坏性 Antigravity 桌面端多语言框架 · 兼容第三方 ASAR 插件",
+        "subtitle": "非破坏性 Antigravity Desktop + Antigravity IDE（仅 Antigravity 部分）多语言框架",
         "ui_lang_label": "界面语言:",
-        "app_dir_label": "Antigravity 安装目录",
+        "target_label": "目标产品",
+        "target_auto": "全部已检测 (Desktop + IDE)",
+        "target_desktop": "仅 Antigravity Desktop",
+        "target_ide": "仅 Antigravity IDE",
+        "app_dir_label": "安装目录（可选自定义）",
         "browse_btn": "浏览...",
         "detect_btn": "自动检测",
         "lang_label": "目标显示语言",
         "status_heading": "当前状态",
-        "status_installed": "i18n 运行时状态: 已安装",
-        "status_not_installed": "i18n 运行时状态: 未安装",
-        "status_dir_missing": "安装目录: 未找到（请点击“浏览”手动选择 Antigravity 根目录）",
-        "status_ctx_yes": "第三方插件兼容: 已检测到 Antigravity Context Meter（卸载时自动保留）",
-        "status_ctx_no": "第三方插件兼容: 支持并保留第三方 ASAR 插件",
-        "status_running": "运行状态: 检测到 Antigravity 正在运行（安装/卸载前请先退出）",
-        "status_stopped": "运行状态: 未检测到占用进程，可安全读写 app.asar",
-        "close_app_btn": "关闭 Antigravity",
+        "status_desktop_installed": "Desktop: 已安装 i18n（{ext}）",
+        "status_desktop_not_installed": "Desktop: 已检测到目录，未安装 i18n",
+        "status_desktop_missing": "Desktop: 未检测到安装目录",
+        "status_ide_installed": "IDE (仅 Antigravity 部分): 已安装 i18n（扩展: {exts}）",
+        "status_ide_not_installed": "IDE (仅 Antigravity 部分): 已检测到目录，未安装 i18n",
+        "status_ide_missing": "IDE: 未检测到安装目录",
+        "status_running": "运行状态: 检测到 {apps} 正在运行（操作该目标前请先关闭）",
+        "status_stopped": "运行状态: 当前所选目标未在运行，可安全安装/卸载",
+        "close_app_btn": "关闭所选进程",
         "install_btn": "安装 / 更新 i18n 运行时",
         "apply_lang_btn": "仅切换语言",
         "restore_soft_btn": "卸载 i18n（保留其他插件）",
@@ -49,31 +49,36 @@ UI_STRINGS: Dict[str, Dict[str, str]] = {
         "refresh_btn": "刷新状态",
         "log_heading": "执行日志",
         "busy": "正在执行操作，请稍候...",
-        "confirm_close": "确定要关闭所有正在运行的 Antigravity 进程吗？请确保没有未保存的工作。",
-        "confirm_hard": "确定要执行完全恢复 (--hard) 吗？这会恢复原始 app.asar 备份并清除所有第三方 ASAR 补丁。",
-        "err_running_install": "Antigravity 正在运行，Windows 会锁定 app.asar。请先退出 Antigravity 或点击“关闭 Antigravity”，然后再安装/卸载。",
-        "install_ok": "安装 / 更新成功！重新打开 Antigravity 后，可在 设置 → 常规 → 语言 或托盘右键菜单中实时切换语言。",
-        "lang_ok": "默认语言配置已更新；若 Antigravity 正在运行，也可直接在 设置 → 常规 → 语言 中即时切换。",
-        "restore_ok": "卸载完成！已完成处理，重启 Antigravity 后生效。",
+        "confirm_close": "确定要关闭正在运行的 {apps} 进程吗？请确保没有未保存的工作。",
+        "confirm_hard": "确定要执行完全恢复 (--hard) 吗？这会恢复原始备份并清除该目标上的所有补丁。",
+        "err_running_install": "{apps} 正在运行，文件可能被占用锁定。请先退出或点击“关闭所选进程”，然后再安装/卸载。",
+        "install_ok": "安装 / 更新成功！重新打开后，可在 设置 → 常规 → 语言 中实时切换语言（IDE 仅汉化 Antigravity 部分）。",
+        "lang_ok": "默认语言配置已更新；若应用正在运行，也可直接在 设置 → 常规 → 语言 中即时切换。",
+        "restore_ok": "卸载完成！已完成处理，重启对应应用后生效。",
         "auto_label": "跟随系统 (auto)",
     },
     "en": {
         "title": f"{PROJECT_NAME} v{VERSION} — Multi-Language Manager",
-        "subtitle": "Non-destructive i18n runtime for Google Antigravity Desktop · Compatible with 3rd-party ASAR mods",
+        "subtitle": "Non-destructive i18n for Antigravity Desktop & Antigravity IDE (Antigravity UI only)",
         "ui_lang_label": "Manager UI:",
-        "app_dir_label": "Antigravity App Directory",
+        "target_label": "Target Product",
+        "target_auto": "All Detected (Desktop + IDE)",
+        "target_desktop": "Antigravity Desktop Only",
+        "target_ide": "Antigravity IDE Only",
+        "app_dir_label": "Custom Directory",
         "browse_btn": "Browse...",
         "detect_btn": "Auto-Detect",
         "lang_label": "Display Language",
         "status_heading": "Status",
-        "status_installed": "i18n Runtime: Installed",
-        "status_not_installed": "i18n Runtime: Not installed",
-        "status_dir_missing": "Install Directory: Not found (click Browse to locate Antigravity root folder)",
-        "status_ctx_yes": "Third-Party Mods: Antigravity Context Meter detected (preserved automatically)",
-        "status_ctx_no": "Third-Party Mods: Safe non-destructive patching enabled",
-        "status_running": "Process State: Antigravity is currently running (close before modifying ASAR)",
-        "status_stopped": "Process State: No running lock detected — ready to patch ASAR",
-        "close_app_btn": "Close Antigravity",
+        "status_desktop_installed": "Desktop: Installed ({ext})",
+        "status_desktop_not_installed": "Desktop: Found, i18n not installed",
+        "status_desktop_missing": "Desktop: Not detected",
+        "status_ide_installed": "IDE (Antigravity UI only): Installed (extensions: {exts})",
+        "status_ide_not_installed": "IDE (Antigravity UI only): Found, i18n not installed",
+        "status_ide_missing": "IDE: Not detected",
+        "status_running": "Process State: {apps} running (close before modifying)",
+        "status_stopped": "Process State: Selected target is not running — safe to patch",
+        "close_app_btn": "Close Running App",
         "install_btn": "Install / Update i18n",
         "apply_lang_btn": "Apply Language Only",
         "restore_soft_btn": "Surgical Uninstall",
@@ -82,12 +87,12 @@ UI_STRINGS: Dict[str, Dict[str, str]] = {
         "refresh_btn": "Refresh",
         "log_heading": "Activity Log",
         "busy": "Working, please wait...",
-        "confirm_close": "Close all running Antigravity processes? Make sure unsaved work is saved first.",
-        "confirm_hard": "Restore the raw app.asar backup (--hard)? This removes ALL ASAR patches including third-party mods.",
-        "err_running_install": "Antigravity is currently running and locks app.asar. Exit Antigravity or click 'Close Antigravity' first.",
-        "install_ok": "Installation succeeded! Launch Antigravity and switch languages live in Settings -> General -> Language or the tray menu.",
-        "lang_ok": "Language preference saved! If Antigravity is open, you can also switch live in Settings -> General -> Language.",
-        "restore_ok": "Restore completed! Restart Antigravity to apply changes.",
+        "confirm_close": "Close running {apps} process(es)? Make sure unsaved work is saved first.",
+        "confirm_hard": "Restore raw backups (--hard)? This removes ALL patches on the selected target(s).",
+        "err_running_install": "{apps} is currently running and may lock files. Exit or click 'Close Running App' first.",
+        "install_ok": "Installation succeeded! Switch languages live in Settings -> General -> Language (IDE keeps VS Code UI untouched).",
+        "lang_ok": "Language preference saved! If the app is open, you can also switch live in Settings -> General -> Language.",
+        "restore_ok": "Restore completed! Restart the app to apply changes.",
         "auto_label": "Follow System (auto)",
     },
 }
@@ -124,36 +129,35 @@ def _default_ui_lang() -> str:
     return "en"
 
 
-def _is_antigravity_running() -> bool:
+def _running_apps_for_target(target_code: str) -> List[str]:
+    checks: List[str] = []
+    if target_code in ("auto", "desktop") and is_process_running("desktop"):
+        checks.append("Antigravity.exe" if sys.platform == "win32" else "Antigravity Desktop")
+    if target_code in ("auto", "ide") and is_process_running("ide"):
+        checks.append("Antigravity IDE")
+    return checks
+
+
+def _stop_target_processes(target_code: str) -> None:
     if sys.platform == "win32":
-        try:
-            out = subprocess.check_output(
-                ["tasklist", "/FI", "IMAGENAME eq Antigravity.exe", "/NH"],
-                text=True,
-                errors="replace",
+        names: List[str] = []
+        if target_code in ("auto", "desktop"):
+            names.append("Antigravity.exe")
+        if target_code in ("auto", "ide"):
+            names.append("Antigravity IDE.exe")
+        for exe in names:
+            subprocess.run(
+                ["taskkill", "/F", "/IM", exe],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
-            return "Antigravity.exe" in out
-        except Exception:
-            return False
-    try:
-        subprocess.check_call(["pgrep", "-f", "[Aa]ntigravity"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True
-    except Exception:
-        return False
-
-
-def _stop_antigravity_process() -> None:
-    if sys.platform == "win32":
-        subprocess.run(
-            ["taskkill", "/F", "/IM", "Antigravity.exe"],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
     else:
-        subprocess.run(["pkill", "-f", "[Aa]ntigravity"], check=False)
+        if target_code in ("auto", "desktop"):
+            subprocess.run(["pkill", "-f", "[Aa]ntigravity"], check=False)
+        if target_code in ("auto", "ide"):
+            subprocess.run(["pkill", "-f", "antigravity-ide"], check=False)
 
 
 def _open_folder(path: Path) -> None:
@@ -173,14 +177,18 @@ class AntigravityI18nApp:
         self.root = root
         self.ui_lang = _default_ui_lang()
         self.busy = False
+        self.target_var = tk.StringVar()
         self.app_dir_var = tk.StringVar()
         self.locale_var = tk.StringVar()
         self.ui_lang_var = tk.StringVar(value="中文" if self.ui_lang == "zh" else "English")
+        self.target_map: Dict[str, str] = {}
+        self.reverse_target_map: Dict[str, str] = {}
+        self.selected_target_code = "auto"
         self.locale_map: Dict[str, str] = {}
         self.reverse_locale_map: Dict[str, str] = {}
 
-        self.root.geometry("720x590")
-        self.root.minsize(640, 520)
+        self.root.geometry("740x625")
+        self.root.minsize(660, 560)
         self._build_ui()
         self._apply_ui_text()
         self.refresh_status(auto_detect=True)
@@ -230,6 +238,14 @@ class AntigravityI18nApp:
         cfg_frame.pack(fill=tk.X, pady=(0, 10))
         self.cfg_frame = cfg_frame
 
+        row0 = ttk.Frame(cfg_frame)
+        row0.pack(fill=tk.X, pady=(0, 8))
+        self.target_lbl = ttk.Label(row0, width=22)
+        self.target_lbl.pack(side=tk.LEFT)
+        self.target_combo = ttk.Combobox(row0, textvariable=self.target_var, state="readonly")
+        self.target_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.target_combo.bind("<<ComboboxSelected>>", self._on_target_change)
+
         row1 = ttk.Frame(cfg_frame)
         row1.pack(fill=tk.X, pady=(0, 8))
         self.app_dir_lbl = ttk.Label(row1, width=22)
@@ -252,10 +268,10 @@ class AntigravityI18nApp:
         st_frame.pack(fill=tk.X, pady=(0, 10))
         self.st_frame = st_frame
 
-        self.st_install_lbl = ttk.Label(st_frame)
-        self.st_install_lbl.pack(anchor="w", pady=2)
-        self.st_ctx_lbl = ttk.Label(st_frame)
-        self.st_ctx_lbl.pack(anchor="w", pady=2)
+        self.st_desktop_lbl = ttk.Label(st_frame)
+        self.st_desktop_lbl.pack(anchor="w", pady=2)
+        self.st_ide_lbl = ttk.Label(st_frame)
+        self.st_ide_lbl.pack(anchor="w", pady=2)
         proc_row = ttk.Frame(st_frame)
         proc_row.pack(fill=tk.X, pady=2)
         self.st_proc_lbl = ttk.Label(proc_row)
@@ -297,12 +313,18 @@ class AntigravityI18nApp:
         self._apply_ui_text()
         self.refresh_status(auto_detect=False)
 
+    def _on_target_change(self, _event=None) -> None:
+        self.selected_target_code = self.target_map.get(self.target_var.get(), "auto")
+        self.app_dir_var.set("")
+        self.refresh_status(auto_detect=True)
+
     def _apply_ui_text(self) -> None:
         self.root.title(self.t("title"))
         self.title_lbl.config(text=f"{PROJECT_NAME} v{VERSION}")
         self.subtitle_lbl.config(text=self.t("subtitle"))
         self.ui_lang_lbl.config(text=self.t("ui_lang_label"))
-        self.cfg_frame.config(text=" " + self.t("app_dir_label") + " ")
+        self.cfg_frame.config(text=" " + self.t("target_label") + " ")
+        self.target_lbl.config(text=self.t("target_label"))
         self.app_dir_lbl.config(text=self.t("app_dir_label"))
         self.browse_btn.config(text=self.t("browse_btn"))
         self.detect_btn.config(text=self.t("detect_btn"))
@@ -317,6 +339,16 @@ class AntigravityI18nApp:
         self.open_locales_btn.config(text=self.t("open_locales_btn"))
         self.log_frame.config(text=" " + self.t("log_heading") + " ")
 
+        self.target_map = {
+            self.t("target_auto"): "auto",
+            self.t("target_desktop"): "desktop",
+            self.t("target_ide"): "ide",
+        }
+        self.reverse_target_map = {v: k for k, v in self.target_map.items()}
+        target_values = [self.t("target_auto"), self.t("target_desktop"), self.t("target_ide")]
+        self.target_combo.config(values=target_values)
+        self.target_var.set(self.reverse_target_map.get(self.selected_target_code, self.t("target_auto")))
+
     def log(self, msg: str) -> None:
         self.log_text.config(state=tk.NORMAL)
         self.log_text.insert(tk.END, msg.rstrip() + "\n")
@@ -330,25 +362,48 @@ class AntigravityI18nApp:
             self.refresh_status(auto_detect=False)
 
     def refresh_status(self, auto_detect: bool = False) -> None:
-        custom = None if auto_detect or not self.app_dir_var.get().strip() else Path(self.app_dir_var.get().strip())
-        st = inspect_install_status(app_dir=custom)
-        if st.get("appDir"):
-            self.app_dir_var.set(st["appDir"])
+        custom_txt = self.app_dir_var.get().strip()
+        custom = None if auto_detect or not custom_txt else Path(custom_txt)
+        desktop_arg = custom if (custom and self.selected_target_code == "desktop") else None
+        ide_arg = custom if (custom and self.selected_target_code == "ide") else None
+        all_st = inspect_all_targets(desktop_dir=desktop_arg, ide_dir=ide_arg)
+        d_st = all_st["desktop"]
+        i_st = all_st["ide"]
 
-        if not st.get("appDirFound"):
-            self.st_install_lbl.config(text=self.t("status_dir_missing"), foreground="#b45309")
-        elif st.get("installed"):
-            self.st_install_lbl.config(text=self.t("status_installed"), foreground="#15803d")
+        if auto_detect or not custom_txt:
+            if self.selected_target_code == "desktop" and d_st.get("appDir"):
+                self.app_dir_var.set(d_st["appDir"])
+            elif self.selected_target_code == "ide" and i_st.get("appDir"):
+                self.app_dir_var.set(i_st["appDir"])
+
+        if not d_st.get("appDirFound"):
+            self.st_desktop_lbl.config(text=self.t("status_desktop_missing"), foreground="#b45309")
+        elif d_st.get("installed"):
+            ext = "Context Meter" if d_st.get("hasContextMeter") else "ASAR"
+            self.st_desktop_lbl.config(
+                text=self.t("status_desktop_installed").format(ext=ext),
+                foreground="#15803d",
+            )
         else:
-            self.st_install_lbl.config(text=self.t("status_not_installed"), foreground="#374151")
+            self.st_desktop_lbl.config(text=self.t("status_desktop_not_installed"), foreground="#374151")
 
-        self.st_ctx_lbl.config(
-            text=self.t("status_ctx_yes") if st.get("hasContextMeter") else self.t("status_ctx_no")
-        )
+        if not i_st.get("appDirFound"):
+            self.st_ide_lbl.config(text=self.t("status_ide_missing"), foreground="#b45309")
+        elif i_st.get("installed"):
+            exts = ", ".join(i_st.get("localizedExtensions", [])) or "core"
+            self.st_ide_lbl.config(
+                text=self.t("status_ide_installed").format(exts=exts),
+                foreground="#15803d",
+            )
+        else:
+            self.st_ide_lbl.config(text=self.t("status_ide_not_installed"), foreground="#374151")
 
-        running = _is_antigravity_running()
-        if running:
-            self.st_proc_lbl.config(text=self.t("status_running"), foreground="#b91c1c")
+        running_apps = _running_apps_for_target(self.selected_target_code)
+        if running_apps:
+            self.st_proc_lbl.config(
+                text=self.t("status_running").format(apps=", ".join(running_apps)),
+                foreground="#b91c1c",
+            )
             self.close_app_btn.config(state=tk.NORMAL)
         else:
             self.st_proc_lbl.config(text=self.t("status_stopped"), foreground="#15803d")
@@ -360,7 +415,7 @@ class AntigravityI18nApp:
         self.locale_map[auto_disp] = "auto"
         self.reverse_locale_map["auto"] = auto_disp
         display_values: List[str] = [auto_disp]
-        for loc in st.get("locales", []):
+        for loc in all_st.get("locales", []):
             code = loc["locale"]
             label = f"{loc.get('nativeName', code)} ({code})"
             self.locale_map[label] = code
@@ -368,7 +423,7 @@ class AntigravityI18nApp:
             display_values.append(label)
 
         self.locale_combo.config(values=display_values)
-        cur_code = st.get("configuredLocale", "auto")
+        cur_code = all_st.get("configuredLocale", "auto")
         self.locale_var.set(self.reverse_locale_map.get(cur_code, auto_disp))
 
     def _selected_locale(self) -> str:
@@ -403,23 +458,36 @@ class AntigravityI18nApp:
         threading.Thread(target=worker, daemon=True).start()
 
     def _close_antigravity(self) -> None:
-        if messagebox.askyesno(PROJECT_NAME, self.t("confirm_close")):
-            _stop_antigravity_process()
+        running_apps = _running_apps_for_target(self.selected_target_code)
+        if not running_apps:
+            return
+        if messagebox.askyesno(PROJECT_NAME, self.t("confirm_close").format(apps=", ".join(running_apps))):
+            _stop_target_processes(self.selected_target_code)
             self.root.after(500, lambda: self.refresh_status(auto_detect=False))
 
     def _do_install(self) -> None:
-        if _is_antigravity_running():
-            messagebox.showwarning(PROJECT_NAME, self.t("err_running_install"))
+        running_apps = _running_apps_for_target(self.selected_target_code)
+        if running_apps:
+            messagebox.showwarning(
+                PROJECT_NAME,
+                self.t("err_running_install").format(apps=", ".join(running_apps)),
+            )
             return
-        app_path = Path(self.app_dir_var.get().strip()) if self.app_dir_var.get().strip() else None
+        custom_txt = self.app_dir_var.get().strip()
+        app_path = Path(custom_txt) if custom_txt else None
+        target_code = self.selected_target_code
         chosen_loc = self._selected_locale()
 
         def task() -> None:
-            res = install_patch(app_dir=app_path, locale=chosen_loc)
-            msg = (
-                f"[OK] ASAR: {res.asar_path}\n"
-                f"     Locale: {res.active_locale} | Packs: {', '.join(res.deployed_locales)}"
-            )
+            results = install_targets(target=target_code, app_dir=app_path, locale=chosen_loc)
+            lines = []
+            for kind, res in results:
+                if kind == "ide":
+                    lines.append(f"[OK][IDE] {res.resources_app_dir} | Exts: {', '.join(res.localized_extensions)}")
+                else:
+                    lines.append(f"[OK][Desktop] {res.asar_path}")
+                lines.append(f"     Locale: {res.active_locale} | Packs: {', '.join(res.deployed_locales)}")
+            msg = "\n".join(lines)
             self.root.after(0, lambda: (self.log(msg), messagebox.showinfo(PROJECT_NAME, self.t("install_ok"))))
 
         self._run_bg(task)
@@ -441,22 +509,24 @@ class AntigravityI18nApp:
         self._run_bg(task)
 
     def _do_restore(self, hard: bool) -> None:
-        if _is_antigravity_running():
-            messagebox.showwarning(PROJECT_NAME, self.t("err_running_install"))
+        running_apps = _running_apps_for_target(self.selected_target_code)
+        if running_apps:
+            messagebox.showwarning(
+                PROJECT_NAME,
+                self.t("err_running_install").format(apps=", ".join(running_apps)),
+            )
             return
         if hard and not messagebox.askyesno(PROJECT_NAME, self.t("confirm_hard")):
             return
-        app_path = Path(self.app_dir_var.get().strip()) if self.app_dir_var.get().strip() else None
+        custom_txt = self.app_dir_var.get().strip()
+        app_path = Path(custom_txt) if custom_txt else None
+        target_code = self.selected_target_code
 
         def task() -> None:
-            asar_path = restore_patch(app_dir=app_path, hard=hard)
-            self.root.after(
-                0,
-                lambda: (
-                    self.log(f"[OK] Restored ({'hard' if hard else 'surgical'}): {asar_path}"),
-                    messagebox.showinfo(PROJECT_NAME, self.t("restore_ok")),
-                ),
-            )
+            restored = restore_targets(target=target_code, app_dir=app_path, hard=hard)
+            mode = "hard" if hard else "surgical"
+            msg = "\n".join(f"[OK] Restored {kind} ({mode}): {p}" for kind, p in restored)
+            self.root.after(0, lambda: (self.log(msg), messagebox.showinfo(PROJECT_NAME, self.t("restore_ok"))))
 
         self._run_bg(task)
 

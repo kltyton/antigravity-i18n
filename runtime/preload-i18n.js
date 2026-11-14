@@ -30,11 +30,47 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (Core, SettingsUi) {
   'use strict';
 
-  var ALLOWED_PROTOCOLS = { 'file:': 1, 'data:': 1, 'about:': 1, 'vscode-webview:': 1, 'chrome-extension:': 1 };
+  var ALLOWED_PROTOCOLS = { 'file:': 1, 'data:': 1, 'about:': 1, 'vscode-file:': 1, 'vscode-webview:': 1, 'chrome-extension:': 1 };
   var ALLOWED_HOSTS = { '127.0.0.1': 1, 'localhost': 1, '[::1]': 1 };
   var SKIP_TAGS = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEXTAREA: 1, CODE: 1, PRE: 1, KBD: 1, SAMP: 1, SVG: 1 };
   var SKIP_CLOSEST = 'pre, code, kbd, samp, .monaco-editor, .xterm, [contenteditable="true"], [data-ag-i18n-ignore], [data-testid^="model-selector"]';
   var TRANSLATABLE_ATTRS = ['title', 'placeholder', 'aria-label', 'alt', 'data-tooltip'];
+
+  var IDE_ANTIGRAVITY_SCOPE_SELECTORS = [
+    '[id="antigravity.agentPanel"]',
+    '[id="antigravity.agentSidePanel"]',
+    '[id="antigravity.agentSidePanelInputBox"]',
+    '[id="antigravity.agentViewContainerId"]',
+    '[id="antigravity.mcpConfigFileInfoWidget"]',
+    '[id^="antigravity."]',
+    '.antigravity-agent-side-panel',
+    '.antigravity-agent-manager',
+    '.antigravity-agent-mode',
+    '.antigravity-configure-plugins-page',
+    '.antigravity-plugin-page',
+    '.antigravity-plugin-config-modal',
+    '.antigravity-ide-welcome',
+    '.antigravity-welcome-container',
+    '.antigravity-onboarding-container',
+    '.antigravity-onboarding-locked-panel',
+    '.antigravity-onboarding',
+    '.antigravity-modal-panel-overlay',
+    '.antigravity-statusbar-settings-panel',
+    '.antigravity-debug-info-widget',
+    '.antigravity-editor-info-widget',
+    '.antigravity-rules-file-info-widget',
+    '.antigravity-tab-info-widget',
+    '.antigravity-nudge',
+    '.jetski-custom-editor-pane',
+    '.jetski-full-screen-view',
+    '.jetski-fast-pick',
+    '.cascade-bar',
+    '.agent-sessions-container',
+    '.agent-sessions-viewer',
+    '.auxiliarybar-drop-overlay',
+    '[data-floating-ui-portal]',
+    '.react-tooltip'
+  ];
 
   function isAntigravityUiLocation(loc) {
     if (!loc || !loc.protocol) return true;
@@ -43,9 +79,15 @@
     return false;
   }
 
-  function createDomTranslator(initialBundle, coreLib) {
+  function createDomTranslator(initialBundle, coreLib, options) {
     var activeCore = coreLib || Core;
     var translator = activeCore.createTranslator(initialBundle);
+    var opts = options || {};
+    var scopeSelectors = Array.isArray(opts.scopeSelectors) && opts.scopeSelectors.length > 0
+      ? opts.scopeSelectors.slice()
+      : null;
+    var scopeSelectorString = scopeSelectors ? scopeSelectors.join(',') : '';
+    var translateTitle = opts.translateTitle !== false;
 
     var textOriginals = new WeakMap();
     var textLastApplied = new WeakMap();
@@ -58,6 +100,58 @@
     var observedFrames = new WeakSet();
     var pendingNodes = new Set();
     var flushScheduled = false;
+
+    function getHostElement(node) {
+      if (!node) return null;
+      if (node.nodeType === 1) return node;
+      if (node.parentElement) return node.parentElement;
+      if (node.parentNode && node.parentNode.nodeType === 1) return node.parentNode;
+      // Handle ShadowRoot boundary
+      if (typeof ShadowRoot !== 'undefined' && node instanceof ShadowRoot) return node.host || null;
+      var root = typeof node.getRootNode === 'function' ? node.getRootNode() : null;
+      if (root && root.host) return root.host;
+      return null;
+    }
+
+    function isWithinScope(node) {
+      if (!scopeSelectorString) return true;
+      var cur = getHostElement(node);
+      while (cur) {
+        if (typeof cur.closest === 'function' && cur.closest(scopeSelectorString)) {
+          return true;
+        }
+        var root = typeof cur.getRootNode === 'function' ? cur.getRootNode() : null;
+        if (root && root.host) {
+          cur = root.host;
+        } else {
+          break;
+        }
+      }
+      return false;
+    }
+
+    function scanNodeWithScope(node) {
+      if (!node) return;
+      if (!scopeSelectorString) {
+        scanSubtree(node);
+        return;
+      }
+      if (isWithinScope(node)) {
+        scanSubtree(node);
+        return;
+      }
+      if (node.nodeType === 1 && typeof node.querySelectorAll === 'function') {
+        var matched = node.querySelectorAll(scopeSelectorString);
+        for (var i = 0; i < matched.length; i++) {
+          scanSubtree(matched[i]);
+        }
+      } else if (node.nodeType === 9 && node.documentElement && typeof node.documentElement.querySelectorAll === 'function') {
+        var docMatched = node.documentElement.querySelectorAll(scopeSelectorString);
+        for (var j = 0; j < docMatched.length; j++) {
+          scanSubtree(docMatched[j]);
+        }
+      }
+    }
     var afterFlushListeners = [];
 
     function onAfterFlush(fn) {
@@ -193,7 +287,7 @@
           var batch = Array.from(pendingNodes);
           pendingNodes.clear();
           for (var i = 0; i < batch.length; i++) {
-            scanSubtree(batch[i]);
+            scanNodeWithScope(batch[i]);
           }
         }
         notifyAfterFlush();
@@ -203,7 +297,7 @@
     function observeRoot(root, win) {
       if (!root || observedRoots.has(root)) return;
       observedRoots.add(root);
-      scanSubtree(root);
+      scanNodeWithScope(root);
 
       var Observer = (win && win.MutationObserver) || (typeof MutationObserver !== 'undefined' ? MutationObserver : null);
       if (!Observer) return;
@@ -212,9 +306,13 @@
         for (var i = 0; i < mutations.length; i++) {
           var m = mutations[i];
           if (m.type === 'characterData') {
-            pendingNodes.add(m.target);
+            if (!scopeSelectorString || isWithinScope(m.target)) {
+              pendingNodes.add(m.target);
+            }
           } else if (m.type === 'attributes') {
-            pendingNodes.add(m.target);
+            if (!scopeSelectorString || isWithinScope(m.target)) {
+              pendingNodes.add(m.target);
+            }
           } else if (m.type === 'childList') {
             for (var j = 0; j < m.addedNodes.length; j++) {
               pendingNodes.add(m.addedNodes[j]);
@@ -258,30 +356,67 @@
     function updateBundle(nextBundle, doc, win) {
       translator = activeCore.createTranslator(nextBundle);
       if (doc && doc.documentElement) {
-        if (doc.title) {
+        if (translateTitle && doc.title) {
           if (!attrOriginals.has(doc.documentElement)) {
             attrOriginals.set(doc.documentElement, Object.create(null));
           }
         }
-        scanSubtree(doc.documentElement);
+        scanNodeWithScope(doc.documentElement);
       }
     }
 
     return {
       translateTextNode: translateTextNode,
       translateElementAttributes: translateElementAttributes,
-      scanSubtree: scanSubtree,
+      scanSubtree: scanNodeWithScope,
       observeRoot: observeRoot,
       updateBundle: updateBundle,
+      isWithinScope: isWithinScope,
       onAfterFlush: onAfterFlush,
       getOriginalText: function (node) { return textOriginals.get(node); },
       getTranslator: function () { return translator; }
     };
   }
 
-  function bootstrapBrowserPreload(win) {
+  function resolvePreloadConfig(win, overrideOptions) {
+    var base = {
+      enabled: true,
+      ipcPrefix: 'ag-i18n:',
+      scopeSelectors: null,
+      injectSettingsCard: true,
+      translateTitle: true,
+      exposeGlobal: true
+    };
+    var cfg = globalThis.__AG_I18N_PRELOAD_CONFIG__;
+    if (typeof cfg === 'function') {
+      try { cfg = cfg(win); } catch (_e) { cfg = null; }
+    }
+    var sources = [cfg, overrideOptions];
+    for (var s = 0; s < sources.length; s++) {
+      var src = sources[s];
+      if (!src || typeof src !== 'object') continue;
+      if (src.enabled !== undefined) base.enabled = !!src.enabled;
+      if (typeof src.ipcPrefix === 'string' && src.ipcPrefix) base.ipcPrefix = src.ipcPrefix;
+      if (src.scopeSelectors === 'ide-antigravity') {
+        base.scopeSelectors = IDE_ANTIGRAVITY_SCOPE_SELECTORS.slice();
+      } else if (Array.isArray(src.scopeSelectors) || src.scopeSelectors === null) {
+        base.scopeSelectors = src.scopeSelectors;
+      }
+      if (src.injectSettingsCard !== undefined) base.injectSettingsCard = !!src.injectSettingsCard;
+      if (src.translateTitle !== undefined) base.translateTitle = !!src.translateTitle;
+      if (src.exposeGlobal !== undefined) base.exposeGlobal = !!src.exposeGlobal;
+    }
+    return base;
+  }
+
+  function bootstrapBrowserPreload(win, overrideOptions) {
     if (!win || !win.document) return null;
     if (!isAntigravityUiLocation(win.location)) return null;
+
+    var cfg = resolvePreloadConfig(win, overrideOptions);
+    if (!cfg.enabled) return null;
+
+    var ipcPrefix = cfg.ipcPrefix;
 
     var electronMod = null;
     try {
@@ -301,7 +436,7 @@
 
     if (ipcRenderer && typeof ipcRenderer.sendSync === 'function') {
       try {
-        var syncState = ipcRenderer.sendSync('ag-i18n:get-state-sync');
+        var syncState = ipcRenderer.sendSync(ipcPrefix + 'get-state-sync');
         if (syncState && typeof syncState === 'object') {
           initialState = syncState;
         }
@@ -310,17 +445,20 @@
       }
     }
 
-    var domTranslator = createDomTranslator(initialState.bundle, Core);
+    var domTranslator = createDomTranslator(initialState.bundle, Core, {
+      scopeSelectors: cfg.scopeSelectors,
+      translateTitle: cfg.translateTitle
+    });
     var settingsLib = SettingsUi || (win && win.AntigravityI18nSettingsUi) || null;
     var settingsCtrl = null;
-    if (settingsLib && typeof settingsLib.createSettingsController === 'function') {
+    if (cfg.injectSettingsCard && settingsLib && typeof settingsLib.createSettingsController === 'function') {
       settingsCtrl = settingsLib.createSettingsController({
         document: win.document,
         getState: function () { return initialState; },
         getOriginalText: domTranslator.getOriginalText,
         onSelectLocale: function (nextLocale) {
           if (ipcRenderer && typeof ipcRenderer.invoke === 'function') {
-            return ipcRenderer.invoke('ag-i18n:set-locale', nextLocale).then(function (updated) {
+            return ipcRenderer.invoke(ipcPrefix + 'set-locale', nextLocale).then(function (updated) {
               if (updated && typeof updated === 'object') {
                 initialState = updated;
                 if (updated.bundle) {
@@ -335,7 +473,7 @@
         },
         onOpenFolder: function () {
           if (ipcRenderer && typeof ipcRenderer.invoke === 'function') {
-            return ipcRenderer.invoke('ag-i18n:open-locales-folder');
+            return ipcRenderer.invoke(ipcPrefix + 'open-locales-folder');
           }
           return Promise.resolve('');
         }
@@ -345,13 +483,13 @@
       });
     }
 
-    if (contextBridge && typeof contextBridge.exposeInMainWorld === 'function' && ipcRenderer) {
+    if (cfg.exposeGlobal && contextBridge && typeof contextBridge.exposeInMainWorld === 'function' && ipcRenderer) {
       try {
         contextBridge.exposeInMainWorld('agI18n', {
           getLocale: function () { return initialState.locale; },
-          listLocales: function () { return ipcRenderer.invoke('ag-i18n:list-locales'); },
-          setLocale: function (locale) { return ipcRenderer.invoke('ag-i18n:set-locale', locale); },
-          openLocalesFolder: function () { return ipcRenderer.invoke('ag-i18n:open-locales-folder'); }
+          listLocales: function () { return ipcRenderer.invoke(ipcPrefix + 'list-locales'); },
+          setLocale: function (locale) { return ipcRenderer.invoke(ipcPrefix + 'set-locale', locale); },
+          openLocalesFolder: function () { return ipcRenderer.invoke(ipcPrefix + 'open-locales-folder'); }
         });
       } catch (_err) {
         // Ignore if contextIsolation is disabled or already exposed
@@ -363,7 +501,12 @@
       win.Element.prototype.attachShadow = function (init) {
         var shadow = origAttachShadow.call(this, init);
         if (shadow && (!init || init.mode === 'open')) {
-          setTimeout(function () { domTranslator.observeRoot(shadow, win); }, 0);
+          var hostEl = this;
+          setTimeout(function () {
+            if (!cfg.scopeSelectors || domTranslator.isWithinScope(hostEl)) {
+              domTranslator.observeRoot(shadow, win);
+            }
+          }, 0);
         }
         return shadow;
       };
@@ -387,7 +530,7 @@
     }
 
     if (ipcRenderer && typeof ipcRenderer.on === 'function') {
-      ipcRenderer.on('ag-i18n:locale-changed', function (_event, nextState) {
+      ipcRenderer.on(ipcPrefix + 'locale-changed', function (_event, nextState) {
         if (!nextState || typeof nextState !== 'object') return;
         initialState = nextState;
         if (nextState.bundle) {
@@ -403,8 +546,10 @@
   }
 
   return {
+    IDE_ANTIGRAVITY_SCOPE_SELECTORS: IDE_ANTIGRAVITY_SCOPE_SELECTORS,
     isAntigravityUiLocation: isAntigravityUiLocation,
     createDomTranslator: createDomTranslator,
+    resolvePreloadConfig: resolvePreloadConfig,
     bootstrapBrowserPreload: bootstrapBrowserPreload
   };
 });

@@ -2,6 +2,6 @@
 """antigravity-i18n: Multi-language runtime localization framework for Google Antigravity."""
 
 PROJECT_NAME = "antigravity-i18n"
-VERSION = "1.1.1"
+VERSION = "1.2.0"
 
 __all__ = ["PROJECT_NAME", "VERSION"]

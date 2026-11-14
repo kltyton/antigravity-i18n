@@ -1,0 +1,85 @@
+name: Test & Build
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check JS runtime syntax
+        shell: bash
+        run: |
+          node --check runtime/core.js
+          node --check runtime/menu-i18n.js
+          node --check runtime/electron-i18n.js
+          node --check runtime/preload-i18n.js
+
+      - name: Validate locale packs
+        run: python cli.py check
+
+      - name: Run unit and runtime test suite
+        run: python -m unittest discover -s tests -v
+
+  build:
+    needs: test
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows
+            sep: ";"
+          - os: macos-latest
+            target: macos
+            sep: ":"
+          - os: ubuntu-latest
+            target: linux
+            sep: ":"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Build installer and restorer
+        shell: bash
+        run: |
+          pyinstaller --onefile --name "antigravity-i18n-install-${{ matrix.target }}" \
+            --add-data "locales${{ matrix.sep }}locales" \
+            --add-data "runtime${{ matrix.sep }}runtime" \
+            install.py
+          pyinstaller --onefile --name "antigravity-i18n-restore-${{ matrix.target }}" \
+            --add-data "locales${{ matrix.sep }}locales" \
+            --add-data "runtime${{ matrix.sep }}runtime" \
+            restore.py
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: antigravity-i18n-${{ matrix.target }}
+          path: dist/antigravity-i18n-*

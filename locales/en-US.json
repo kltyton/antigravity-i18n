@@ -1,0 +1,12 @@
+{
+  "meta": {
+    "locale": "en-US",
+    "name": "English (US)",
+    "nativeName": "English",
+    "direction": "ltr",
+    "punctuationStyle": "ascii"
+  },
+  "exact": {},
+  "menu": {},
+  "patterns": []
+}

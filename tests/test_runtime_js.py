@@ -42,6 +42,8 @@ const checks = {
   dynamic_upgrade: t.translate('You can upgrade to a higher Google AI Ultra plan to receive the highest rate limits.'),
   dynamic_weekly_quota: t.translate('You have used some of your weekly limit, it will fully refresh in 6 days, 16 hours.'),
   browser_subagent_desc: t.translate('Configure allowed and denied URLs for the browser subagent. It runs in the built-in browser, so no separate browser install is needed.'),
+  copy_project_name: t.translate('Copy Project Name'),
+  see_all_count: t.translate('See all (12)'),
   url_untouched: t.translate('https://github.com/kltyton/antigravity-i18n'),
   win_path_untouched: t.translate('C:\\Users\\demo\\project'),
   identity_check: core.createTranslator(JSON.parse(fs.readFileSync('./locales/en-US.json', 'utf8'))).translate('Project Settings')
@@ -59,6 +61,8 @@ console.log(JSON.stringify(checks));
         self.assertEqual(res["dynamic_upgrade"], "您可以升级到更高级别的 Google AI Ultra 套餐，以获得最高的速率限制。")
         self.assertEqual(res["dynamic_weekly_quota"], "您已使用部分每周限额，它将在 6 天 16 小时 后完全重置。")
         self.assertEqual(res["browser_subagent_desc"], "为浏览器子智能体配置允许和拒绝的 URL。它会在内置浏览器中运行，无需单独安装浏览器。")
+        self.assertEqual(res["copy_project_name"], "复制项目名称")
+        self.assertEqual(res["see_all_count"], "查看全部 (12)")
         self.assertEqual(res["url_untouched"], "https://github.com/kltyton/antigravity-i18n")
         self.assertEqual(res["win_path_untouched"], "C:\\Users\\demo\\project")
         self.assertEqual(res["identity_check"], "Project Settings")

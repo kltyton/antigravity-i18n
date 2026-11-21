@@ -4,12 +4,25 @@
 import hashlib
 import json
 import os
+import shutil
 import struct
 from pathlib import Path
 from typing import Dict, Tuple
 
 
 BLOCK_SIZE = 4 * 1024 * 1024
+
+
+def replace_file_safe(src: Path, dst: Path) -> None:
+    """Replace dst with src, falling back to in-place overwrite on Windows file-share locks."""
+    try:
+        os.replace(src, dst)
+    except PermissionError:
+        try:
+            shutil.copyfile(src, dst)
+        finally:
+            if src.exists():
+                src.unlink()
 
 
 def compute_integrity(data: bytes) -> dict:
@@ -139,4 +152,4 @@ def pack_asar(
         out_f.write(header_buf)
         for chunk in chunks:
             out_f.write(chunk)
-    os.replace(tmp_asar, dest_asar)
+    replace_file_safe(tmp_asar, dest_asar)

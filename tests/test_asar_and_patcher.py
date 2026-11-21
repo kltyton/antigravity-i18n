@@ -5,8 +5,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from ag_i18n.asar import extract_asar, pack_asar, read_asar_header
+from ag_i18n.asar import extract_asar, pack_asar, read_asar_header, replace_file_safe
 from ag_i18n.patcher import (
     MAIN_START,
     PRELOAD_START,
@@ -164,6 +165,20 @@ class AsarAndPatcherTests(unittest.TestCase):
             self.assertEqual(cfg2, "zh-CN")
             with self.assertRaises(ValueError):
                 set_configured_locale("xx-INVALID", user_i18n_dir=user_dir)
+
+    def test_replace_file_safe_falls_back_on_permission_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "app.asar.tmp"
+            dst = root / "app.asar"
+            src.write_bytes(b"new-asar-payload")
+            dst.write_bytes(b"old-asar-payload")
+
+            with patch("ag_i18n.asar.os.replace", side_effect=PermissionError("locked")):
+                replace_file_safe(src, dst)
+
+            self.assertEqual(dst.read_bytes(), b"new-asar-payload")
+            self.assertFalse(src.exists())
 
 
 if __name__ == "__main__":

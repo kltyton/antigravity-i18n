@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from .asar import extract_asar, pack_asar, read_asar_header
+from .asar import extract_asar, pack_asar, read_asar_header, replace_file_safe
 from .paths import (
     LOCALES_DIR,
     RUNTIME_DIR,
@@ -415,7 +415,7 @@ def restore_patch(
             if candidate.is_file():
                 tmp_target = asar_path.with_name(f".{asar_path.name}.{os.getpid()}.restore")
                 shutil.copy2(candidate, tmp_target)
-                os.replace(tmp_target, asar_path)
+                replace_file_safe(tmp_target, asar_path)
                 return asar_path
         raise FileNotFoundError(f"No original ASAR backup found under: {resources_dir}")
 

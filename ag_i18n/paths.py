@@ -73,6 +73,33 @@ def get_user_i18n_dir() -> Path:
     return xdg / "antigravity" / "i18n"
 
 
+def get_all_user_i18n_dirs() -> List[Path]:
+    """Return the primary user i18n dir plus any secondary multi-instance profile dirs (e.g. Cockpit Tools)."""
+    dirs: List[Path] = [get_user_i18n_dir()]
+    if sys.platform == "win32":
+        app_data = Path(os.environ.get("APPDATA", Path.home() / "AppData/Roaming"))
+        cockpit_root = app_data / ".cockpit_tools" / "instances" / "antigravity-legacy"
+        if cockpit_root.is_dir():
+            for profile in sorted(cockpit_root.iterdir()):
+                if not profile.is_dir():
+                    continue
+                if (
+                    (profile / "i18n").is_dir()
+                    or (profile / "Preferences").is_file()
+                    or (profile / "Local State").is_file()
+                ):
+                    dirs.append(profile / "i18n")
+
+    deduped: List[Path] = []
+    seen = set()
+    for p in dirs:
+        key = os.path.normcase(os.path.abspath(str(p)))
+        if key not in seen:
+            seen.add(key)
+            deduped.append(p)
+    return deduped
+
+
 def get_browser_cache_dir() -> Path:
     """Return the Chromium Cache_Data directory used by Antigravity Desktop."""
     if sys.platform == "win32":

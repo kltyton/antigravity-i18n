@@ -180,6 +180,26 @@ class AsarAndPatcherTests(unittest.TestCase):
             self.assertEqual(dst.read_bytes(), b"new-asar-payload")
             self.assertFalse(src.exists())
 
+    def test_cockpit_multi_instance_user_i18n_sync(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_dir = _create_fake_antigravity_app(root, with_legacy=False)
+            roaming = root / "Roaming"
+            default_i18n = roaming / "antigravity" / "i18n"
+            cockpit_profile = roaming / ".cockpit_tools" / "instances" / "antigravity-legacy" / "copy1"
+            (cockpit_profile / "Preferences").parent.mkdir(parents=True, exist_ok=True)
+            (cockpit_profile / "Preferences").write_text("{}", encoding="utf-8")
+
+            with patch.dict("os.environ", {"APPDATA": str(roaming)}):
+                install_patch(app_dir=app_dir, locale="zh-CN")
+                set_configured_locale("ja")
+
+            copy_i18n = cockpit_profile / "i18n"
+            self.assertTrue((default_i18n / "locales" / "zh-CN.json").is_file())
+            self.assertTrue((copy_i18n / "locales" / "zh-CN.json").is_file())
+            self.assertEqual(json.loads((default_i18n / "config.json").read_text(encoding="utf-8"))["locale"], "ja")
+            self.assertEqual(json.loads((copy_i18n / "config.json").read_text(encoding="utf-8"))["locale"], "ja")
+
 
 if __name__ == "__main__":
     unittest.main()

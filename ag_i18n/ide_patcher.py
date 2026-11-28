@@ -280,7 +280,7 @@ def install_ide_patch(
 
     deployed_locales, active_locale = deploy_locales(
         locales_src=loc_dir,
-        user_i18n_dir=user_dir,
+        user_i18n_dir=user_i18n_dir,
         selected_locale=locale,
     )
 

@@ -15,6 +15,7 @@ from .paths import (
     LOCALES_DIR,
     RUNTIME_DIR,
     detect_antigravity_app_dir,
+    get_all_user_i18n_dirs,
     get_resources_dir,
     get_user_i18n_dir,
 )
@@ -236,14 +237,11 @@ def _atomic_write_json(target: Path, data: dict) -> None:
     os.replace(tmp, target)
 
 
-def deploy_locales(
-    locales_src: Optional[Path] = None,
-    user_i18n_dir: Optional[Path] = None,
+def _deploy_single_i18n_dir(
+    src_dir: Path,
+    dest_base: Path,
     selected_locale: Optional[str] = None,
 ) -> Tuple[List[str], str]:
-    """Copy locale JSON packs to the user i18n directory and ensure config.json exists."""
-    src_dir = locales_src or LOCALES_DIR
-    dest_base = user_i18n_dir or get_user_i18n_dir()
     dest_locales = dest_base / "locales"
     dest_locales.mkdir(parents=True, exist_ok=True)
 
@@ -269,6 +267,23 @@ def deploy_locales(
 
     _atomic_write_json(config_path, config_data)
     return deployed, str(config_data.get("locale", "auto"))
+
+
+def deploy_locales(
+    locales_src: Optional[Path] = None,
+    user_i18n_dir: Optional[Path] = None,
+    selected_locale: Optional[str] = None,
+) -> Tuple[List[str], str]:
+    """Copy locale JSON packs to all detected user i18n directories and ensure config.json exists."""
+    src_dir = locales_src or LOCALES_DIR
+    targets = [user_i18n_dir] if user_i18n_dir is not None else get_all_user_i18n_dirs()
+    deployed: List[str] = []
+    active_locale = "auto"
+    for idx, dest_base in enumerate(targets):
+        cur_deployed, cur_locale = _deploy_single_i18n_dir(src_dir, dest_base, selected_locale)
+        if idx == 0:
+            deployed, active_locale = cur_deployed, cur_locale
+    return deployed, active_locale
 
 
 def build_preload_bundle(runtime_dir: Path, prelude_js: str = "") -> str:
@@ -342,7 +357,7 @@ def install_patch(
 
     deployed_locales, active_locale = deploy_locales(
         locales_src=locales_src or LOCALES_DIR,
-        user_i18n_dir=user_dir,
+        user_i18n_dir=user_i18n_dir,
         selected_locale=locale,
     )
 
@@ -428,8 +443,9 @@ def restore_patch(
 
 
 def set_configured_locale(locale: str, user_i18n_dir: Optional[Path] = None) -> Path:
-    """Update external user config.json to the requested locale ('auto' or language tag)."""
-    base_dir = user_i18n_dir or get_user_i18n_dir()
+    """Update external user config.json across detected i18n dirs to the requested locale."""
+    targets = [user_i18n_dir] if user_i18n_dir is not None else get_all_user_i18n_dirs()
+    base_dir = targets[0]
     locales_dir = base_dir / "locales"
     if locale != "auto":
         if not (locales_dir / f"{locale}.json").is_file():
@@ -441,18 +457,22 @@ def set_configured_locale(locale: str, user_i18n_dir: Optional[Path] = None) -> 
                 )
                 raise ValueError(f"Unknown locale {locale!r}. Available: auto, {', '.join(available)}")
 
-    config_path = base_dir / "config.json"
-    config_data: dict = {}
-    if config_path.is_file():
-        try:
-            loaded = json.loads(config_path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                config_data = loaded
-        except Exception:
-            pass
-    config_data["locale"] = locale
-    _atomic_write_json(config_path, config_data)
-    return config_path
+    primary_config_path = base_dir / "config.json"
+    for idx, target_dir in enumerate(targets):
+        config_path = target_dir / "config.json"
+        config_data: dict = {}
+        if config_path.is_file():
+            try:
+                loaded = json.loads(config_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    config_data = loaded
+            except Exception:
+                pass
+        config_data["locale"] = locale
+        _atomic_write_json(config_path, config_data)
+        if idx == 0:
+            primary_config_path = config_path
+    return primary_config_path
 
 
 def list_locales(user_i18n_dir: Optional[Path] = None) -> Tuple[str, List[dict]]:

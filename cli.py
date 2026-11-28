@@ -10,7 +10,7 @@ from typing import List, Optional
 from ag_i18n import PROJECT_NAME, VERSION
 from ag_i18n.extractor import extract_all_ui_strings
 from ag_i18n.patcher import list_locales, set_configured_locale
-from ag_i18n.paths import LOCALES_DIR, get_user_i18n_dir
+from ag_i18n.paths import LOCALES_DIR
 from ag_i18n.targets import TARGET_CHOICES, install_targets, restore_targets
 from ag_i18n.validator import validate_locales_dir
 
@@ -55,7 +55,7 @@ def cmd_restore(args: argparse.Namespace) -> int:
 
 
 def cmd_lang(args: argparse.Namespace) -> int:
-    user_dir = Path(args.user_dir) if args.user_dir else get_user_i18n_dir()
+    user_dir = Path(args.user_dir) if args.user_dir else None
     cfg = set_configured_locale(args.locale, user_i18n_dir=user_dir)
     print(f"[{PROJECT_NAME}] Active locale updated to {args.locale!r} in {cfg}")
     print("Tip: You can also switch languages live from Antigravity's Language menu without restarting.")
